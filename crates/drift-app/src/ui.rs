@@ -6,11 +6,11 @@ use std::process::Command;
 use anyhow::{Context as _, Result};
 use crepuscularity_gpui::prelude::*;
 use gpui::{
-    actions, bounds, fill, hsla, point, rgba, size, App as GpuiApp, Application, Bounds,
+    actions, bounds, div, fill, hsla, point, rgba, size, App as GpuiApp, Application, Bounds,
     ClipboardItem, CursorStyle, Element, ElementId, ElementInputHandler, EntityInputHandler,
     FocusHandle, Focusable, GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, Style,
-    TextRun, UTF16Selection, UnderlineStyle, WindowBounds, WindowOptions,
+    StatefulInteractiveElement, TextRun, UTF16Selection, UnderlineStyle, WindowBounds, WindowOptions,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -40,7 +40,7 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
     Application::new().run(move |cx: &mut GpuiApp| {
         bind_text_input_keys(cx);
 
-        let bounds = bounds(point(px(80.), px(80.)), size(px(980.), px(760.)));
+        let bounds = bounds(point(px(72.), px(72.)), size(px(720.), px(520.)));
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,
@@ -53,7 +53,7 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
             display_id: None,
             window_background: gpui::WindowBackgroundAppearance::Opaque,
             app_id: Some("drift-wallpaper.controls".to_string()),
-            window_min_size: Some(size(px(860.), px(680.))),
+            window_min_size: Some(size(px(520.), px(380.))),
             window_decorations: None,
             tabbing_identifier: None,
         };
@@ -240,75 +240,117 @@ impl DriftUi {
             Err(error) => self.set_status_err(error.to_string(), cx),
         }
     }
+
+    fn toggle_wallpaper_enabled(
+        &mut self,
+        _: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.config.enabled = !self.config.enabled;
+        match self.save_config() {
+            Ok(()) => {
+                let msg = if self.config.enabled {
+                    "Wallpaper rendering enabled"
+                } else {
+                    "Wallpaper rendering paused (config saved)"
+                };
+                self.set_status_ok(msg, cx);
+            }
+            Err(error) => {
+                self.config.enabled = !self.config.enabled;
+                self.set_status_err(error.to_string(), cx);
+            }
+        }
+    }
 }
 
 impl Render for DriftUi {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = self.status.clone();
         let swatches = current_swatches(&self.config);
         let custom_colors = self.custom_colors.clone();
         let image_path = self.image_path.clone();
 
-        view! {r#"
-            div w-full h-full flex flex-col bg-zinc-950 text-white font-['Instrument_Sans']
+        let wallpaper_on = self.config.enabled;
+        let toggle_label: SharedString = if wallpaper_on {
+            "Wallpaper: on (click to pause)".into()
+        } else {
+            "Wallpaper: off (click to enable)".into()
+        };
 
-                div px-10 pt-10 pb-6 flex flex-col gap-3 border-b border-zinc-800
-                    div text-5xl font-bold tracking-[-0.04em]
+        let body = view! {r#"
+            div min-h-full grid grid-cols-2 gap-0
+
+                div p-6 flex flex-col gap-5 border-r border-zinc-900
+                    div flex flex-col gap-2
+                        div text-xs uppercase tracking-[0.2em] text-zinc-500
+                            "Current palette"
+                        {swatches}
+
+                    div flex flex-col gap-2
+                        div text-xs uppercase tracking-[0.2em] text-zinc-500
+                            "Presets"
+                        div flex flex-wrap gap-2
+                            {action_button("Ocean", cx.listener(Self::apply_ocean))}
+                            {action_button("Sunset", cx.listener(Self::apply_sunset))}
+                            {action_button("Forest", cx.listener(Self::apply_forest))}
+                            {action_button("Lava", cx.listener(Self::apply_lava))}
+                            {action_button("Midnight", cx.listener(Self::apply_midnight))}
+                            {action_button("Monochrome", cx.listener(Self::apply_monochrome))}
+
+                    div flex flex-col gap-2
+                        div text-xs uppercase tracking-[0.2em] text-zinc-500
+                            "Custom colors"
+                        div text-xs text-zinc-400
+                            "Three hex colors, comma-separated."
+                        {custom_colors}
+                        div flex gap-2 flex-wrap
+                            {primary_button("Apply custom", cx.listener(Self::apply_custom))}
+
+                div p-6 flex flex-col gap-5
+                    div flex flex-col gap-2
+                        div text-xs uppercase tracking-[0.2em] text-zinc-500
+                            "Reference image"
+                        div text-xs text-zinc-400
+                            "Image path, then extract palette."
+                        {image_path}
+                        div flex gap-2 flex-wrap
+                            {primary_button("Extract from path", cx.listener(Self::apply_image_path))}
+                            {action_button("Current wallpaper", cx.listener(Self::apply_current_wallpaper))}
+                            {action_button("Wallpaper screenshot", cx.listener(Self::apply_wallpaper_screenshot))}
+
+                    div flex flex-col gap-2
+                        div text-xs uppercase tracking-[0.2em] text-zinc-500
+                            "Renderer"
+                        div text-xs text-zinc-400
+                            "Background or preview; uses saved config."
+                        div flex gap-2 flex-wrap
+                            {primary_button("Launch background", cx.listener(Self::open_background))}
+                            {action_button("Launch preview", cx.listener(Self::open_preview))}
+        "#};
+
+        let scroll = div()
+            .id("drift-controls-scroll")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(body);
+
+        view! {r#"
+            div w-full h-full min-h-0 flex flex-col bg-zinc-950 text-white font-['Instrument_Sans']
+
+                div px-6 pt-5 pb-4 flex flex-col gap-2 border-b border-zinc-800 shrink-0
+                    div text-3xl font-bold tracking-[-0.03em]
                         "Drift Wallpaper"
-                    div text-lg text-zinc-400 max-w-[720px]
-                        "A GPUI control surface for palettes, wallpaper-derived colors, and launching the renderer."
-                    div text-sm text-emerald-300
+                    div text-sm text-zinc-400 max-w-[640px] leading-snug
+                        "Palettes, wallpaper colors, and renderer launch."
+                    div flex flex-wrap items-center gap-2
+                        {action_button(toggle_label, cx.listener(Self::toggle_wallpaper_enabled))}
+                    div text-xs text-emerald-300
                         "{status}"
 
-                div flex-1 overflow-hidden
-                    div h-full grid grid-cols-2 gap-0
-
-                        div p-10 flex flex-col gap-8 border-r border-zinc-900
-                            div flex flex-col gap-3
-                                div text-sm uppercase tracking-[0.24em] text-zinc-500
-                                    "Current palette"
-                                {swatches}
-
-                            div flex flex-col gap-3
-                                div text-sm uppercase tracking-[0.24em] text-zinc-500
-                                    "Presets"
-                                div flex flex-wrap gap-3
-                                    {action_button("Ocean", cx.listener(Self::apply_ocean))}
-                                    {action_button("Sunset", cx.listener(Self::apply_sunset))}
-                                    {action_button("Forest", cx.listener(Self::apply_forest))}
-                                    {action_button("Lava", cx.listener(Self::apply_lava))}
-                                    {action_button("Midnight", cx.listener(Self::apply_midnight))}
-                                    {action_button("Monochrome", cx.listener(Self::apply_monochrome))}
-
-                            div flex flex-col gap-3
-                                div text-sm uppercase tracking-[0.24em] text-zinc-500
-                                    "Custom colors"
-                                div text-sm text-zinc-400
-                                    "Enter three hex colors separated by commas."
-                                {custom_colors}
-                                div flex gap-3
-                                    {primary_button("Apply custom colors", cx.listener(Self::apply_custom))}
-
-                        div p-10 flex flex-col gap-8
-                            div flex flex-col gap-3
-                                div text-sm uppercase tracking-[0.24em] text-zinc-500
-                                    "Reference image"
-                                div text-sm text-zinc-400
-                                    "Paste an image or screenshot path, then extract its palette."
-                                {image_path}
-                                div flex gap-3 flex-wrap
-                                    {primary_button("Extract from path", cx.listener(Self::apply_image_path))}
-                                    {action_button("Use current wallpaper", cx.listener(Self::apply_current_wallpaper))}
-                                    {action_button("Capture wallpaper screenshot", cx.listener(Self::apply_wallpaper_screenshot))}
-
-                            div flex flex-col gap-3
-                                div text-sm uppercase tracking-[0.24em] text-zinc-500
-                                    "Renderer"
-                                div text-sm text-zinc-400
-                                    "Launch a background wallpaper process or a separate preview window. Both read the saved config."
-                                div flex gap-3
-                                    {primary_button("Launch background", cx.listener(Self::open_background))}
-                                    {action_button("Launch preview", cx.listener(Self::open_preview))}
+                { scroll }
         "#}
     }
 }
@@ -334,13 +376,13 @@ fn current_swatches(config: &AppConfig) -> impl IntoElement {
         color_to_rgba_u32(config.params.color_c),
     ];
 
-    div().flex().gap_4().children((0..3).map(move |index| {
+    div().flex().gap_3().children((0..3).map(move |index| {
         div()
-            .w(px(180.))
+            .w(px(120.))
             .flex()
             .flex_col()
-            .gap_2()
-            .child(div().h(px(120.)).rounded_lg().bg(rgba(fills[index])))
+            .gap_1()
+            .child(div().h(px(72.)).rounded_md().bg(rgba(fills[index])))
             .child(
                 div()
                     .text_sm()
@@ -380,8 +422,8 @@ fn action_button(
     listener: impl Fn(&MouseUpEvent, &mut Window, &mut GpuiApp) + 'static,
 ) -> impl IntoElement {
     div()
-        .px_4()
-        .py_3()
+        .px_3()
+        .py_2()
         .rounded_lg()
         .bg(rgb(0x18181b))
         .border_1()
@@ -399,8 +441,8 @@ fn primary_button(
     listener: impl Fn(&MouseUpEvent, &mut Window, &mut GpuiApp) + 'static,
 ) -> impl IntoElement {
     div()
-        .px_4()
-        .py_3()
+        .px_3()
+        .py_2()
         .rounded_lg()
         .bg(rgb(0x2563eb))
         .text_sm()
@@ -973,8 +1015,8 @@ impl Render for TextInput {
             .child(
                 div()
                     .w_full()
-                    .px_4()
-                    .py_3()
+                    .px_3()
+                    .py_2()
                     .rounded_lg()
                     .bg(rgb(0x09090b))
                     .border_1()
