@@ -1,26 +1,8 @@
-# drift-wallpaper-macos
+# the drift macos screensaver as a wallpaper
 
-A **live fluid wallpaper** for macOS 14+ built entirely in Rust.  
-The desktop background becomes a continuously-evolving, GPU-rendered fluid 
-animation inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
+from [sandydoo/flux](https://github.com/sandydoo/flux).
 
 ![CI](https://github.com/undivisible/drift-wallpaper-macos/actions/workflows/ci.yml/badge.svg)
-
----
-
-## Features
-
-| Feature | Details |
-|---|---|
-| Live fluid simulation | Domain-warped fractal Brownian motion rendered via **wgpu** (Metal on macOS) |
-| Live wallpaper window | Fullscreen window at `kCGDesktopWindowLevel` – sits *behind* all app windows |
-| Multi-display support | One wallpaper window per connected screen |
-| Menu bar app | 🌊 icon → toggle on/off, pick preset colours, extract colours from an image |
-| Colour presets | Ocean, Sunset, Forest, Lava, Midnight, Monochrome |
-| Image colour extraction | Median-cut quantisation extracts a 3-stop palette from any PNG/JPEG |
-| Start at Login | Installs/removes a per-user **launchd** Launch Agent |
-| Low resource usage | VSync-locked via wgpu Fifo present-mode; GPU-only rendering |
-| macOS 14+ | Uses `objc2` for idiomatic Rust/Objective-C interop |
 
 ---
 
@@ -152,24 +134,6 @@ drift-wallpaper-macos/
 ├── .github/workflows/ci.yml
 └── README.md
 ```
-
-### Rendering approach
-
-The Drift effect uses **three levels of domain warping** over fractal Brownian
-motion (inspired by Inigo Quilez's "Shader Toy" technique):
-
-```
-q = fbm(p),   fbm(p + offset)
-r = fbm(p + 4·q),   fbm(p + 4·q + offset)
-f = fbm(p + 4·r)
-colour = gradient(f)  →  vignette
-```
-
-Each `fbm` call layers five octaves of smooth value noise.  The slowly-drifting
-`time` uniform drives the animated evolution.  No compute shaders or simulation
-state buffers are needed: every pixel is computed independently in the fragment
-shader, making the approach suitable for low-power (Apple Silicon efficiency)
-cores.
 
 ### macOS wallpaper integration
 
