@@ -1,0 +1,51 @@
+[package]
+name = "drift-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "macOS live-wallpaper app powered by the Drift fluid simulation"
+
+[[bin]]
+name = "drift-wallpaper"
+path = "src/main.rs"
+
+[dependencies]
+drift-core = { path = "../drift-core" }
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+winit.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+
+# macOS-only dependencies: Objective-C runtime + AppKit
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSURL",
+    "NSDictionary",
+    "NSArray",
+    "NSError",
+    "NSProcessInfo",
+    "NSFileManager",
+    "NSUserDefaults",
+    "NSBundle",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSWindow",
+    "NSScreen",
+    "NSWorkspace",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSMenu",
+    "NSMenuItem",
+    "NSButton",
+    "NSView",
+    "NSOpenPanel",
+    "NSAlert",
+] }
