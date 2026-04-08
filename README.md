@@ -218,4 +218,4 @@ cargo test --workspace
 
 ## License
 
-MIT – see [LICENSE](LICENSE).
+[MPL-2.0](LICENSE).
