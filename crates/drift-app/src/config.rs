@@ -1,7 +1,7 @@
 //! Application configuration: persisted to `~/Library/Application Support/drift-wallpaper/config.json`
 //! on macOS, or a local `drift-config.json` fallback on other platforms.
 // Items in this module are used only from the macOS-specific code path.
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#![allow(dead_code)]
 
 use anyhow::{Context, Result};
 use drift_core::{
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Top-level application config persisted to disk.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Whether the live wallpaper is currently enabled.
     pub enabled: bool,
@@ -52,13 +52,18 @@ impl AppConfig {
 
     /// Load from disk, returning the default config if the file does not exist.
     pub fn load() -> Self {
+        Self::try_load().unwrap_or_default()
+    }
+
+    /// Load from disk, returning an error if parsing or reading fails.
+    pub fn try_load() -> Result<Self> {
         let path = Self::config_path();
         match std::fs::read_to_string(&path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
-                log::warn!("Failed to parse config at {path:?}: {e}. Using defaults.");
-                Self::default()
-            }),
-            Err(_) => Self::default(),
+            Ok(content) => {
+                serde_json::from_str(&content).with_context(|| format!("parse config {path:?}"))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error).with_context(|| format!("read config {path:?}")),
         }
     }
 

@@ -72,6 +72,7 @@ impl Uniforms {
 ///
 /// Call [`DriftRenderer::resize`] whenever the window dimensions change.
 pub struct DriftRenderer {
+    _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
@@ -90,16 +91,12 @@ impl DriftRenderer {
     /// is tied to the window, so the caller must ensure the window outlives
     /// this renderer.
     pub fn new(
+        instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
         width: u32,
         height: u32,
         params: DriftParams,
     ) -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
-
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&surface),
@@ -111,7 +108,7 @@ impl DriftRenderer {
             &wgpu::DeviceDescriptor {
                 label: Some("drift-device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits: adapter.limits(),
                 memory_hints: Default::default(),
             },
             None,
@@ -223,6 +220,7 @@ impl DriftRenderer {
         });
 
         Ok(Self {
+            _instance: instance,
             device,
             queue,
             surface,

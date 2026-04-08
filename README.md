@@ -1,8 +1,18 @@
-# the drift macos screensaver as a wallpaper
+# drift-wallpaper
 
-from [sandydoo/flux](https://github.com/sandydoo/flux).
+Drift-style wallpaper animation inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
 
 ![CI](https://github.com/undivisible/drift-wallpaper-macos/actions/workflows/ci.yml/badge.svg)
+
+---
+
+## Behavior
+
+- Default launch on all platforms opens a `crepuscularity-gpui` control window.
+- macOS: `--background` runs as a desktop-level wallpaper window behind other apps.
+- Linux and Windows: `--background` opens borderless full-screen renderer windows per display.
+- Linux and Windows: `--preview` opens a regular preview window.
+- The animation is shader-based drift / domain-warped noise, not a fluid simulation.
 
 ---
 
@@ -35,6 +45,9 @@ cargo build -p drift-app
 # Optimised release build (recommended for daily use)
 cargo build --release -p drift-app
 
+# Install into ~/.cargo/bin
+cargo install --path crates/drift-app --locked
+
 # The binary is at:
 ./target/release/drift-wallpaper
 ```
@@ -44,24 +57,58 @@ cargo build --release -p drift-app
 ## Running
 
 ```sh
-# Run directly from the project root
+# Open the GPUI control window
 cargo run --release -p drift-app
 
-# Or run the compiled binary
-./target/release/drift-wallpaper
+# Launch wallpaper/background mode
+cargo run --release -p drift-app -- --background
+
+# Launch a normal preview window
+cargo run --release -p drift-app -- --preview
+
+# Or run the installed binary
+drift-wallpaper
+drift-wallpaper --background
 ```
 
-When the app starts:
+The GPUI controller lets you:
 
-1. The Dock icon is hidden (accessory mode).  
-2. A 🌊 icon appears in the menu bar.  
-3. The live wallpaper covers all connected displays.  
+- switch presets
+- paste three exact custom colors
+- extract colors from an image path
+- match the current wallpaper image or a screenshot
+- launch background mode or a preview window
 
-Use the menu bar icon to configure the app.
+On macOS, `--background` also keeps the menu bar controller available.
+
+## Color Controls
+
+```sh
+# Use a built-in preset
+drift-wallpaper --preset ocean
+
+# Set three exact custom colors
+drift-wallpaper --colors '#112233,#445566,#778899'
+
+# Extract colors from an image or screenshot file
+drift-wallpaper --image /path/to/reference.jpg
+drift-wallpaper --screenshot /path/to/screenshot.png
+
+# On macOS, derive colors from the current desktop wallpaper image
+drift-wallpaper --wallpaper-image
+
+# On macOS, fall back to a live screen capture and sample colors from that
+drift-wallpaper --wallpaper-screenshot
+
+# Preview the current config without launching the wallpaper
+drift-wallpaper --print-config
+```
+
+These commands persist the chosen colors into the app config, so the next launch uses the updated palette automatically.
 
 ---
 
-## Menu bar options
+## macOS Menu Bar Options
 
 | Option | Description |
 |---|---|

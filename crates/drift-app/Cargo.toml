@@ -20,6 +20,10 @@ serde_json.workspace = true
 winit.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
+image.workspace = true
+gpui.workspace = true
+unicode-segmentation.workspace = true
+crepuscularity-gpui = { path = "../../../crepuscularity/crates/crepuscularity-gpui" }
 
 # macOS-only dependencies: Objective-C runtime + AppKit
 [target.'cfg(target_os = "macos")'.dependencies]

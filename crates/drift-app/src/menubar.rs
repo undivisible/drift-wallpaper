@@ -13,7 +13,7 @@ mod macos {
 
     use objc2::rc::Retained;
     use objc2::runtime::Sel;
-    use objc2::{declare_class, msg_send, msg_send_id, ClassType, DeclaredClass};
+    use objc2::MainThreadOnly;
     use objc2_app_kit::{
         NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
     };
@@ -33,17 +33,17 @@ mod macos {
         mtm: MainThreadMarker,
         config: SharedConfig,
     ) -> Retained<NSStatusItem> {
-        let status_bar = unsafe { NSStatusBar::systemStatusBar() };
-        let status_item = unsafe { status_bar.statusItemWithLength(NSVariableStatusItemLength) };
+        let status_bar = NSStatusBar::systemStatusBar();
+        let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
 
         // Set the icon text (emoji as a quick placeholder).
-        if let Some(button) = unsafe { status_item.button(mtm) } {
+        if let Some(button) = status_item.button(mtm) {
             let title = NSString::from_str("🌊");
-            unsafe { button.setTitle(&title) };
+            button.setTitle(&title);
         }
 
         let menu = build_menu(mtm, config);
-        unsafe { status_item.setMenu(Some(&menu)) };
+        status_item.setMenu(Some(&menu));
 
         status_item
     }
@@ -53,7 +53,7 @@ mod macos {
     // -----------------------------------------------------------------------
 
     fn build_menu(mtm: MainThreadMarker, config: SharedConfig) -> Retained<NSMenu> {
-        let menu = unsafe { NSMenu::new(mtm) };
+        let menu = NSMenu::new(mtm);
 
         // ── Enable / Disable ───────────────────────────────────────────────
         let enabled = config.lock().unwrap().enabled;
@@ -66,25 +66,23 @@ mod macos {
             },
             None,
         );
-        unsafe { menu.addItem(&toggle_item) };
+        menu.addItem(&toggle_item);
 
         separator(&menu, mtm);
 
         // ── Colour presets submenu ─────────────────────────────────────────
         let presets_item = make_item(mtm, "Colour Preset", None);
-        let presets_menu = unsafe { NSMenu::new(mtm) };
+        let presets_menu = NSMenu::new(mtm);
         for &preset in drift_core::color::Preset::all() {
             let item = make_item(mtm, preset.label(), None);
-            unsafe { presets_menu.addItem(&item) };
+            presets_menu.addItem(&item);
         }
-        unsafe {
-            presets_item.setSubmenu(Some(&presets_menu));
-            menu.addItem(&presets_item);
-        }
+        presets_item.setSubmenu(Some(&presets_menu));
+        menu.addItem(&presets_item);
 
         // ── Upload image ───────────────────────────────────────────────────
         let upload_item = make_item(mtm, "Extract Colors from Image…", None);
-        unsafe { menu.addItem(&upload_item) };
+        menu.addItem(&upload_item);
 
         separator(&menu, mtm);
 
@@ -99,13 +97,13 @@ mod macos {
             },
             None,
         );
-        unsafe { menu.addItem(&login_item) };
+        menu.addItem(&login_item);
 
         separator(&menu, mtm);
 
         // ── Quit ───────────────────────────────────────────────────────────
         let quit_item = make_item(mtm, "Quit Drift Wallpaper", Some(objc2::sel!(terminate:)));
-        unsafe { menu.addItem(&quit_item) };
+        menu.addItem(&quit_item);
 
         menu
     }
@@ -113,23 +111,22 @@ mod macos {
     fn make_item(mtm: MainThreadMarker, title: &str, action: Option<Sel>) -> Retained<NSMenuItem> {
         let title_ns = NSString::from_str(title);
         let key = ns_string!("");
-        let item = unsafe {
+        unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(),
+                NSMenuItem::alloc(mtm),
                 &title_ns,
                 action,
                 key,
             )
-        };
-        item
+        }
     }
 
     fn separator(menu: &NSMenu, mtm: MainThreadMarker) {
-        let sep = unsafe { NSMenuItem::separatorItem(mtm) };
-        unsafe { menu.addItem(&sep) };
+        let sep = NSMenuItem::separatorItem(mtm);
+        menu.addItem(&sep);
     }
 }
 
 // Re-export for macOS.
 #[cfg(target_os = "macos")]
-pub use macos::{create_status_item, SharedConfig};
+pub use macos::create_status_item;

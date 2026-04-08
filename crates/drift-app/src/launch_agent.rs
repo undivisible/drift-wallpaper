@@ -4,7 +4,7 @@
 //! starts automatically at login.  On non-macOS platforms the functions are
 //! no-ops.
 // Items in this module are used only from the macOS-specific code path.
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#![allow(dead_code)]
 
 use anyhow::Result;
 

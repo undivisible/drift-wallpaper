@@ -11,11 +11,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # ──────────────────────────────────────────────────────────────────────────
-  # 1. Syntax check + test drift-core on Linux (platform-independent code).
-  # ──────────────────────────────────────────────────────────────────────────
-  check-linux:
-    name: Check & Test (Linux)
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,34 +37,33 @@ jobs:
       - name: Rust fmt check
         run: cargo fmt --check
 
-      - name: Clippy (drift-core)
-        run: cargo clippy -p drift-core -- -D warnings
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
 
-      - name: Clippy (drift-app, Linux stubs)
-        run: cargo clippy -p drift-app -- -D warnings
-
-      - name: Test (drift-core)
-        run: cargo test -p drift-core
-
-      - name: Test (drift-app, Linux stubs)
-        run: cargo test -p drift-app
-
-  # ──────────────────────────────────────────────────────────────────────────
-  # 2. Full build + test on macOS (native target, Metal backend).
-  # ──────────────────────────────────────────────────────────────────────────
-  build-macos:
-    name: Build & Test (macOS)
-    runs-on: macos-14
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
-      - name: Clippy (all)
-        run: cargo clippy --workspace -- -D warnings
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev
 
       - name: Test (all)
         run: cargo test --workspace
@@ -75,8 +71,19 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p drift-app
 
+      - name: Verify cargo install
+        run: cargo install --path crates/drift-app --locked --force
+
       - name: Upload binary artifact
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: drift-wallpaper-macos-aarch64
+          name: drift-wallpaper-${{ runner.os }}
           path: target/release/drift-wallpaper
+
+      - name: Upload binary artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-wallpaper-Windows
+          path: target/release/drift-wallpaper.exe
