@@ -1,14 +1,12 @@
-use std::path::PathBuf;
-use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use crepuscularity_runtime::{
     parse_component_file, render_nodes_interactive, ComponentFile, CrepusMouseDispatch,
-    TemplateContext, TemplateValue,
+    TemplateContext,
 };
-use drift_core::color::{ColorPalette, Preset};
-use drift_core::simulation::DriftParams;
+use drift_core::{ColorMode, ColorPreset, Mode, PressureMode, Settings};
 use gpui::{
     actions, bounds, div, point, px, rgb, size, App as GpuiApp, AppContext, Application, Context,
     IntoElement, KeyBinding, MouseUpEvent, ParentElement, PathPromptOptions, Render, Styled,
@@ -17,7 +15,7 @@ use gpui::{
 
 use crate::{
     cli,
-    config::{AppConfig, SUPPRESS_MENU_BAR_TRAY_ENV},
+    config::{AppConfig, MonitorMode, SUPPRESS_MENU_BAR_TRAY_ENV},
 };
 
 #[cfg(target_os = "macos")]
@@ -25,11 +23,6 @@ use crate::menubar;
 
 actions!(drift_app_actions, [Quit]);
 
-static SETTINGS_UI: LazyLock<Result<ComponentFile, String>> =
-    LazyLock::new(|| parse_component_file(include_str!("../views/settings_ui.crepus")));
-
-/// When set (e.g. by the tray "Open Settings" action), the settings window opens without
-/// adding another menu bar icon—the live wallpaper process already owns the tray.
 pub fn run_ui(initial_config: AppConfig) -> Result<()> {
     let shared = Arc::new(Mutex::new(initial_config));
     let shared_window = Arc::clone(&shared);
@@ -47,7 +40,7 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
             menubar::create_status_item(mtm, Arc::clone(&shared))
         });
 
-        let bounds = bounds(point(px(88.), px(72.)), size(px(420.), px(560.)));
+        let bounds = bounds(point(px(88.), px(72.)), size(px(820.), px(860.)));
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,
@@ -60,7 +53,7 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
             display_id: None,
             window_background: gpui::WindowBackgroundAppearance::Opaque,
             app_id: Some("drift-wallpaper.controls".to_string()),
-            window_min_size: Some(size(px(380.), px(480.))),
+            window_min_size: Some(size(px(640.), px(700.))),
             window_decorations: None,
             tabbing_identifier: None,
         };
@@ -91,59 +84,312 @@ impl DriftUi {
     }
 
     fn save_config(&self, cfg: &AppConfig) -> Result<()> {
-        let mut g = self
+        let mut normalized = cfg.clone();
+        normalized.sync_linked_monitors();
+        let mut guard = self
             .config
             .lock()
             .map_err(|_| anyhow::anyhow!("config mutex poisoned"))?;
-        *g = cfg.clone();
-        g.save()
+        *guard = normalized.clone();
+        guard.save()
     }
 
-    fn apply_preset_enum(&mut self, preset: Preset, cx: &mut Context<Self>) {
+    fn modify_config(
+        &mut self,
+        cx: &mut Context<Self>,
+        mutator: impl FnOnce(&mut AppConfig) -> Result<()>,
+    ) {
         let mut cfg = self.read_config();
-        let speed = cfg.params.speed;
-        let scale = cfg.params.scale;
-        let target_fps = cfg.params.target_fps;
-        let palette = ColorPalette::preset(preset);
-        cfg.params = DriftParams::from_palette(&palette, speed);
-        cfg.params.scale = scale;
-        cfg.params.target_fps = target_fps;
-        match self.save_config(&cfg) {
+        match mutator(&mut cfg).and_then(|_| self.save_config(&cfg)) {
             Ok(()) => cx.notify(),
-            Err(e) => log::warn!("save config: {e}"),
+            Err(error) => log::warn!("settings update: {error}"),
         }
     }
 
-    fn open_color_picker(&mut self, index: usize, _: &mut Window, cx: &mut Context<Self>) {
-        #[cfg(target_os = "macos")]
-        {
-            let mut cfg = self.read_config();
-            let initial = match index {
-                0 => cfg.params.color_a,
-                1 => cfg.params.color_b,
-                _ => cfg.params.color_c,
-            };
-            let Some(color) = macos_choose_color(initial) else {
-                return;
-            };
-            match index {
-                0 => cfg.params.color_a = color,
-                1 => cfg.params.color_b = color,
-                _ => cfg.params.color_c = color,
+    fn monitor_ids(cfg: &AppConfig) -> Vec<String> {
+        cfg.monitors.keys().cloned().collect()
+    }
+
+    fn select_monitor_by_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.modify_config(cx, |cfg| {
+            if let Some(id) = Self::monitor_ids(cfg).get(index).cloned() {
+                cfg.select_monitor(id);
             }
-            if let Err(e) = self.save_config(&cfg) {
-                log::warn!("save config: {e}");
-            }
-            cx.notify();
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (index, cx);
-            log::info!("Color picker is only available on macOS.");
+            Ok(())
+        });
+    }
+
+    fn toggle_link_mode(&mut self, cx: &mut Context<Self>) {
+        self.modify_config(cx, |cfg| {
+            let next = match cfg.monitor_mode {
+                MonitorMode::Linked => MonitorMode::Independent,
+                MonitorMode::Independent => MonitorMode::Linked,
+            };
+            cfg.set_monitor_mode(next);
+            Ok(())
+        });
+    }
+
+    fn update_settings(&mut self, cx: &mut Context<Self>, mutator: impl FnOnce(&mut Settings)) {
+        self.modify_config(cx, |cfg| {
+            mutator(cfg.active_profile_mut());
+            Ok(())
+        });
+    }
+
+    fn bump_u32(value: &mut u32, delta: i32, min: u32, max: u32) {
+        let next = (*value as i64 + delta as i64).clamp(min as i64, max as i64);
+        *value = next as u32;
+    }
+
+    fn bump_f32(value: &mut f32, delta: f32, min: f32, max: f32) {
+        *value = (*value + delta).clamp(min, max);
+    }
+
+    fn cycle_mode(settings: &mut Settings) {
+        settings.mode = match settings.mode {
+            Mode::Normal => Mode::DebugNoise,
+            Mode::DebugNoise => Mode::DebugFluid,
+            Mode::DebugFluid => Mode::DebugPressure,
+            Mode::DebugPressure => Mode::DebugDivergence,
+            Mode::DebugDivergence => Mode::Normal,
+        };
+    }
+
+    fn cycle_pressure_mode(settings: &mut Settings) {
+        settings.pressure_mode = match settings.pressure_mode {
+            PressureMode::Retain => PressureMode::ClearWith(0.0),
+            PressureMode::ClearWith(_) => PressureMode::Retain,
+        };
+    }
+
+    fn random_seed() -> String {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{now:x}")
+    }
+
+    fn ensure_noise(settings: &mut Settings, index: usize) {
+        while settings.noise_channels.len() <= index {
+            settings
+                .noise_channels
+                .push(Settings::default().noise_channels[0].clone());
         }
     }
 
-    fn pick_image_file(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn handle_action(
+        &mut self,
+        action: &str,
+        _: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            "close_window" => {
+                cx.quit();
+            }
+            "toggle_wallpaper_enabled" => {
+                self.modify_config(cx, |cfg| {
+                    cfg.enabled = !cfg.enabled;
+                    Ok(())
+                });
+            }
+            "toggle_launch_at_login" => {
+                #[cfg(target_os = "macos")]
+                {
+                    use crate::launch_agent;
+
+                    self.modify_config(cx, |cfg| {
+                        let next = !cfg.launch_at_login;
+                        cfg.launch_at_login = next;
+                        let result = if next {
+                            launch_agent::install()
+                        } else {
+                            launch_agent::uninstall()
+                        };
+                        if let Err(error) = result {
+                            cfg.launch_at_login = !next;
+                            return Err(error);
+                        }
+                        Ok(())
+                    });
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = cx;
+            }
+            "toggle_link_mode" => self.toggle_link_mode(cx),
+            "open_background" => {
+                if let Err(error) = spawn_default_wallpaper_process() {
+                    log::warn!("launch wallpaper: {error}");
+                }
+                cx.notify();
+            }
+            "open_preview" => {
+                if let Err(error) = spawn_mode("--preview") {
+                    log::warn!("launch preview: {error}");
+                }
+                cx.notify();
+            }
+            "pick_image_file" => self.pick_image_file(cx),
+            "apply_wallpaper_image" => self.apply_current_wallpaper(cx),
+            "apply_wallpaper_screenshot" => self.apply_wallpaper_screenshot(cx),
+            "set_preset_original" => self.update_settings(cx, |settings| {
+                settings.color_mode = ColorMode::Preset(ColorPreset::Original)
+            }),
+            "set_preset_plasma" => self.update_settings(cx, |settings| {
+                settings.color_mode = ColorMode::Preset(ColorPreset::Plasma)
+            }),
+            "set_preset_poolside" => self.update_settings(cx, |settings| {
+                settings.color_mode = ColorMode::Preset(ColorPreset::Poolside)
+            }),
+            "set_preset_freedom" => self.update_settings(cx, |settings| {
+                settings.color_mode = ColorMode::Preset(ColorPreset::Freedom)
+            }),
+            "cycle_mode" => self.update_settings(cx, Self::cycle_mode),
+            "toggle_pressure_mode" => self.update_settings(cx, Self::cycle_pressure_mode),
+            "pressure_clear_down" => self.update_settings(cx, |settings| {
+                let clear = match settings.pressure_mode {
+                    PressureMode::Retain => 0.0,
+                    PressureMode::ClearWith(value) => value,
+                };
+                settings.pressure_mode = PressureMode::ClearWith((clear - 0.05).max(-5.0));
+            }),
+            "pressure_clear_up" => self.update_settings(cx, |settings| {
+                let clear = match settings.pressure_mode {
+                    PressureMode::Retain => 0.0,
+                    PressureMode::ClearWith(value) => value,
+                };
+                settings.pressure_mode = PressureMode::ClearWith((clear + 0.05).min(5.0));
+            }),
+            "seed_randomize" => self.update_settings(cx, |settings| {
+                settings.seed = Some(Self::random_seed());
+            }),
+            "seed_clear" => self.update_settings(cx, |settings| {
+                settings.seed = None;
+            }),
+            _ => {
+                if let Some(index) = action.strip_prefix("select_monitor__") {
+                    if let Ok(index) = index.parse::<usize>() {
+                        self.select_monitor_by_index(index, cx);
+                    }
+                    return;
+                }
+                if let Some(field) = action.strip_prefix("adjust__") {
+                    self.apply_adjustment(field, cx);
+                    return;
+                }
+                if let Some(field) = action.strip_prefix("noise__") {
+                    self.apply_noise_adjustment(field, cx);
+                    return;
+                }
+                log::warn!("unknown crepus action: {action}");
+            }
+        }
+    }
+
+    fn apply_adjustment(&mut self, payload: &str, cx: &mut Context<Self>) {
+        let parts: Vec<_> = payload.split("__").collect();
+        if parts.len() != 2 {
+            return;
+        }
+        let (field, direction) = (parts[0], parts[1]);
+        self.update_settings(cx, |settings| match (field, direction) {
+            ("fluid_size", "down") => Self::bump_u32(&mut settings.fluid_size, -8, 32, 512),
+            ("fluid_size", "up") => Self::bump_u32(&mut settings.fluid_size, 8, 32, 512),
+            ("fluid_frame_rate", "down") => {
+                Self::bump_f32(&mut settings.fluid_frame_rate, -5.0, 1.0, 240.0)
+            }
+            ("fluid_frame_rate", "up") => {
+                Self::bump_f32(&mut settings.fluid_frame_rate, 5.0, 1.0, 240.0)
+            }
+            ("fluid_timestep", "down") => {
+                Self::bump_f32(&mut settings.fluid_timestep, -0.002, 0.001, 0.2)
+            }
+            ("fluid_timestep", "up") => {
+                Self::bump_f32(&mut settings.fluid_timestep, 0.002, 0.001, 0.2)
+            }
+            ("viscosity", "down") => Self::bump_f32(&mut settings.viscosity, -0.5, 0.0, 20.0),
+            ("viscosity", "up") => Self::bump_f32(&mut settings.viscosity, 0.5, 0.0, 20.0),
+            ("velocity_dissipation", "down") => {
+                Self::bump_f32(&mut settings.velocity_dissipation, -0.01, 0.0, 1.0)
+            }
+            ("velocity_dissipation", "up") => {
+                Self::bump_f32(&mut settings.velocity_dissipation, 0.01, 0.0, 1.0)
+            }
+            ("diffusion_iterations", "down") => {
+                Self::bump_u32(&mut settings.diffusion_iterations, -1, 0, 100)
+            }
+            ("diffusion_iterations", "up") => {
+                Self::bump_u32(&mut settings.diffusion_iterations, 1, 0, 100)
+            }
+            ("pressure_iterations", "down") => {
+                Self::bump_u32(&mut settings.pressure_iterations, -1, 1, 200)
+            }
+            ("pressure_iterations", "up") => {
+                Self::bump_u32(&mut settings.pressure_iterations, 1, 1, 200)
+            }
+            ("line_length", "down") => {
+                Self::bump_f32(&mut settings.line_length, -25.0, 10.0, 1000.0)
+            }
+            ("line_length", "up") => Self::bump_f32(&mut settings.line_length, 25.0, 10.0, 1000.0),
+            ("line_width", "down") => Self::bump_f32(&mut settings.line_width, -0.5, 0.5, 30.0),
+            ("line_width", "up") => Self::bump_f32(&mut settings.line_width, 0.5, 0.5, 30.0),
+            ("line_begin_offset", "down") => {
+                Self::bump_f32(&mut settings.line_begin_offset, -0.05, 0.0, 1.0)
+            }
+            ("line_begin_offset", "up") => {
+                Self::bump_f32(&mut settings.line_begin_offset, 0.05, 0.0, 1.0)
+            }
+            ("line_variance", "down") => {
+                Self::bump_f32(&mut settings.line_variance, -0.05, 0.0, 2.0)
+            }
+            ("line_variance", "up") => Self::bump_f32(&mut settings.line_variance, 0.05, 0.0, 2.0),
+            ("grid_spacing", "down") => Self::bump_u32(&mut settings.grid_spacing, -1, 2, 60),
+            ("grid_spacing", "up") => Self::bump_u32(&mut settings.grid_spacing, 1, 2, 60),
+            ("view_scale", "down") => Self::bump_f32(&mut settings.view_scale, -0.05, 0.1, 5.0),
+            ("view_scale", "up") => Self::bump_f32(&mut settings.view_scale, 0.05, 0.1, 5.0),
+            ("noise_multiplier", "down") => {
+                Self::bump_f32(&mut settings.noise_multiplier, -0.05, 0.0, 5.0)
+            }
+            ("noise_multiplier", "up") => {
+                Self::bump_f32(&mut settings.noise_multiplier, 0.05, 0.0, 5.0)
+            }
+            _ => {}
+        });
+    }
+
+    fn apply_noise_adjustment(&mut self, payload: &str, cx: &mut Context<Self>) {
+        let parts: Vec<_> = payload.split("__").collect();
+        if parts.len() != 3 {
+            return;
+        }
+        let Ok(index) = parts[0].parse::<usize>() else {
+            return;
+        };
+        let field = parts[1];
+        let direction = parts[2];
+        self.update_settings(cx, move |settings| {
+            Self::ensure_noise(settings, index);
+            let channel = &mut settings.noise_channels[index];
+            match (field, direction) {
+                ("scale", "down") => Self::bump_f32(&mut channel.scale, -0.5, 0.1, 100.0),
+                ("scale", "up") => Self::bump_f32(&mut channel.scale, 0.5, 0.1, 100.0),
+                ("multiplier", "down") => Self::bump_f32(&mut channel.multiplier, -0.05, 0.0, 5.0),
+                ("multiplier", "up") => Self::bump_f32(&mut channel.multiplier, 0.05, 0.0, 5.0),
+                ("offset_increment", "down") => {
+                    Self::bump_f32(&mut channel.offset_increment, -0.0005, 0.0, 0.1)
+                }
+                ("offset_increment", "up") => {
+                    Self::bump_f32(&mut channel.offset_increment, 0.0005, 0.0, 0.1)
+                }
+                _ => {}
+            }
+        });
+    }
+
+    fn pick_image_file(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -154,117 +400,26 @@ impl DriftUi {
             let Some(path) = paths.first() else {
                 return;
             };
-            let mut cfg = self.read_config();
-            match cli::apply_image_palette(&mut cfg, path).and_then(|_| self.save_config(&cfg)) {
-                Ok(()) => cx.notify(),
-                Err(e) => log::warn!("image palette: {e}"),
-            }
+            self.modify_config(cx, |cfg| cli::apply_image_color_mode(cfg, path));
         }
     }
 
-    fn apply_current_wallpaper(
-        &mut self,
-        _: &MouseUpEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn apply_current_wallpaper(&mut self, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         {
-            let mut cfg = self.read_config();
-            match cli::apply_current_wallpaper_palette(&mut cfg)
-                .and_then(|_| self.save_config(&cfg))
-            {
-                Ok(()) => cx.notify(),
-                Err(e) => log::warn!("wallpaper image: {e}"),
-            }
+            self.modify_config(cx, cli::apply_current_wallpaper_color_mode);
         }
         #[cfg(not(target_os = "macos"))]
-        {
-            let _ = cx;
-            log::info!("System wallpaper sampling is only implemented on macOS.");
-        }
+        let _ = cx;
     }
 
-    fn apply_wallpaper_screenshot(
-        &mut self,
-        _: &MouseUpEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn apply_wallpaper_screenshot(&mut self, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         {
-            let mut cfg = self.read_config();
-            match cli::apply_wallpaper_screenshot_palette(&mut cfg)
-                .and_then(|_| self.save_config(&cfg))
-            {
-                Ok(()) => cx.notify(),
-                Err(e) => log::warn!("screenshot palette: {e}"),
-            }
+            self.modify_config(cx, cli::apply_wallpaper_screenshot_color_mode);
         }
         #[cfg(not(target_os = "macos"))]
-        {
-            let _ = cx;
-        }
-    }
-
-    fn open_background(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(e) = spawn_default_wallpaper_process() {
-            log::warn!("launch wallpaper: {e}");
-        }
-        cx.notify();
-    }
-
-    fn open_preview(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(e) = spawn_mode("--preview") {
-            log::warn!("launch preview: {e}");
-        }
-        cx.notify();
-    }
-
-    fn toggle_wallpaper_enabled(
-        &mut self,
-        _: &MouseUpEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mut cfg = self.read_config();
-        cfg.enabled = !cfg.enabled;
-        if let Err(e) = self.save_config(&cfg) {
-            log::warn!("save config: {e}");
-        }
-        cx.notify();
-    }
-
-    fn toggle_launch_at_login(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        #[cfg(target_os = "macos")]
-        {
-            use crate::launch_agent;
-
-            let mut cfg = self.read_config();
-            let next = !cfg.launch_at_login;
-            cfg.launch_at_login = next;
-            let agent_res = if next {
-                launch_agent::install()
-            } else {
-                launch_agent::uninstall()
-            };
-            if let Err(err) = agent_res.and_then(|_| self.save_config(&cfg)) {
-                log::warn!("open at login: {err}");
-                cfg.launch_at_login = !next;
-                let _ = self.save_config(&cfg);
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = cx;
-            log::info!("Launch at login is only available on macOS.");
-            return;
-        }
-        cx.notify();
-    }
-
-    fn close_window(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.quit();
+        let _ = cx;
     }
 }
 
@@ -276,89 +431,361 @@ impl CrepusMouseDispatch for DriftUi {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match action {
-            "close_window" => self.close_window(event, window, cx),
-            "toggle_wallpaper_enabled" => self.toggle_wallpaper_enabled(event, window, cx),
-            "toggle_launch_at_login" => self.toggle_launch_at_login(event, window, cx),
-            "pick_image_file" => self.pick_image_file(event, window, cx),
-            "apply_wallpaper_image" => self.apply_current_wallpaper(event, window, cx),
-            "apply_wallpaper_screenshot" => self.apply_wallpaper_screenshot(event, window, cx),
-            "open_background" => self.open_background(event, window, cx),
-            "open_preview" => self.open_preview(event, window, cx),
-            "swatch_0" => self.open_color_picker(0, window, cx),
-            "swatch_1" => self.open_color_picker(1, window, cx),
-            "swatch_2" => self.open_color_picker(2, window, cx),
-            "preset_flux_original" => self.apply_preset_enum(Preset::FluxOriginal, cx),
-            "preset_flux_plasma" => self.apply_preset_enum(Preset::FluxPlasma, cx),
-            "preset_flux_poolside" => self.apply_preset_enum(Preset::FluxPoolside, cx),
-            "preset_flux_freedom" => self.apply_preset_enum(Preset::FluxFreedom, cx),
-            "preset_ocean" => self.apply_preset_enum(Preset::Ocean, cx),
-            "preset_sunset" => self.apply_preset_enum(Preset::Sunset, cx),
-            "preset_forest" => self.apply_preset_enum(Preset::Forest, cx),
-            "preset_lava" => self.apply_preset_enum(Preset::Lava, cx),
-            "preset_midnight" => self.apply_preset_enum(Preset::Midnight, cx),
-            "preset_monochrome" => self.apply_preset_enum(Preset::Monochrome, cx),
-            other => log::warn!("unknown crepus action: {other}"),
-        }
+        self.handle_action(action, event, window, cx);
     }
 }
 
 impl Render for DriftUi {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let cfg = self.read_config();
-
-        let comp_file = match SETTINGS_UI.as_ref() {
-            Ok(c) => c,
-            Err(e) => {
+        let source = build_settings_template(&cfg);
+        let component_file: ComponentFile = match parse_component_file(&source) {
+            Ok(file) => file,
+            Err(error) => {
                 return div()
                     .w_full()
                     .h_full()
                     .p(px(16.))
                     .text_color(rgb(0xf87171))
-                    .child(format!("Settings template error:\n{e}"))
+                    .child(format!("Settings template error:\n{error}"))
                     .into_any_element();
             }
         };
 
-        let Some(root) = comp_file.components.get("SettingsRoot") else {
+        let Some(root) = component_file.components.get("SettingsRoot") else {
             return div()
                 .w_full()
                 .h_full()
                 .p(px(16.))
                 .text_color(rgb(0xf87171))
-                .child("SettingsRoot component missing from settings_ui.crepus")
+                .child("SettingsRoot component missing from generated settings")
                 .into_any_element();
         };
 
-        let mut tctx = TemplateContext::new();
-        tctx.base_dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("views"));
-        tctx.virtual_files.insert(
-            "settings_ui.crepus".into(),
-            include_str!("../views/settings_ui.crepus").to_string(),
-        );
-
-        tctx.set("enabled", TemplateValue::Bool(cfg.enabled));
-        #[cfg(target_os = "macos")]
-        tctx.set("macos", TemplateValue::Bool(true));
-        #[cfg(not(target_os = "macos"))]
-        tctx.set("macos", TemplateValue::Bool(false));
-        tctx.set("launch_at_login", TemplateValue::Bool(cfg.launch_at_login));
-        tctx.set("color_a_hex", rgb_hex(cfg.params.color_a));
-        tctx.set("color_b_hex", rgb_hex(cfg.params.color_b));
-        tctx.set("color_c_hex", rgb_hex(cfg.params.color_c));
-
+        let tctx = TemplateContext::new();
         render_nodes_interactive(&root.nodes, &tctx, cx)
     }
 }
 
-fn rgb_hex(c: [f32; 3]) -> TemplateValue {
-    let r = (c[0].clamp(0.0, 1.0) * 255.0).round() as u8;
-    let g = (c[1].clamp(0.0, 1.0) * 255.0).round() as u8;
-    let b = (c[2].clamp(0.0, 1.0) * 255.0).round() as u8;
-    TemplateValue::Str(format!("#{r:02x}{g:02x}{b:02x}"))
+fn build_settings_template(cfg: &AppConfig) -> String {
+    let settings = cfg.active_profile();
+    let monitor_ids: Vec<_> = cfg.monitors.keys().cloned().collect();
+    let selected_monitor = cfg.selected_monitor_id();
+
+    let mut out = String::new();
+    out.push_str(
+        "+++\n+++\n\n--- SettingsRoot\ndiv w-full h-full flex flex-col min-h-0 bg-zinc-950 text-zinc-100 text-sm\n  div shrink-0 flex items-center justify-between px-4 py-3 border-b border-zinc-800\n    div text-lg font-semibold tracking-tight\n      \"Flux Wallpaper\"\n    div px-2 py-1 rounded-md text-zinc-400 cursor-pointer @mouseup=close_window\n      \"Close\"\n\n  div flex-1 min-h-0 overflow-y-scroll px-4 py-4 flex flex-col gap-4\n",
+    );
+
+    out.push_str(&card(
+        "Session",
+        &[
+            action_row(
+                "Wallpaper",
+                if cfg.enabled { "Live" } else { "Paused" },
+                "toggle_wallpaper_enabled",
+            ),
+            action_row(
+                "Monitor mode",
+                if cfg.monitor_mode == MonitorMode::Linked {
+                    "Linked"
+                } else {
+                    "Independent"
+                },
+                "toggle_link_mode",
+            ),
+            action_row("Start wallpaper", "Desktop windows", "open_background"),
+            action_row("Open preview", "Preview window", "open_preview"),
+            action_row(
+                "Open at login",
+                if cfg.launch_at_login { "On" } else { "Off" },
+                "toggle_launch_at_login",
+            ),
+        ]
+        .join(""),
+    ));
+
+    let mut monitor_markup = String::from("div flex flex-wrap gap-2\n");
+    if monitor_ids.is_empty() {
+        monitor_markup.push_str(&button("No monitors discovered yet", None, false));
+    } else {
+        for (index, monitor_id) in monitor_ids.iter().enumerate() {
+            let monitor = &cfg.monitors[monitor_id];
+            let active = selected_monitor == Some(monitor_id.as_str());
+            monitor_markup.push_str(&button(
+                &monitor.name_hint,
+                Some(&format!("select_monitor__{index}")),
+                active,
+            ));
+        }
+    }
+    out.push_str(&card("Monitors", &monitor_markup));
+
+    let color_source_label = match &settings.color_mode {
+        ColorMode::Preset(ColorPreset::Original) => "Original preset".to_string(),
+        ColorMode::Preset(ColorPreset::Plasma) => "Plasma preset".to_string(),
+        ColorMode::Preset(ColorPreset::Poolside) => "Poolside preset".to_string(),
+        ColorMode::Preset(ColorPreset::Freedom) => "Freedom preset".to_string(),
+        ColorMode::ImageFile(path) => format!("Image: {}", path.display()),
+    };
+    let mut color_markup = String::new();
+    color_markup.push_str("div flex flex-col gap-3\n");
+    color_markup.push_str("  div text-xs text-zinc-400\n");
+    color_markup.push_str(&format!("    {}\n", quoted(&color_source_label)));
+    color_markup.push_str("  div flex flex-wrap gap-2\n");
+    color_markup.push_str(&button(
+        "Original",
+        Some("set_preset_original"),
+        matches!(
+            settings.color_mode,
+            ColorMode::Preset(ColorPreset::Original)
+        ),
+    ));
+    color_markup.push_str(&button(
+        "Plasma",
+        Some("set_preset_plasma"),
+        matches!(settings.color_mode, ColorMode::Preset(ColorPreset::Plasma)),
+    ));
+    color_markup.push_str(&button(
+        "Poolside",
+        Some("set_preset_poolside"),
+        matches!(
+            settings.color_mode,
+            ColorMode::Preset(ColorPreset::Poolside)
+        ),
+    ));
+    color_markup.push_str(&button(
+        "Freedom",
+        Some("set_preset_freedom"),
+        matches!(settings.color_mode, ColorMode::Preset(ColorPreset::Freedom)),
+    ));
+    color_markup.push_str(&button("Choose image…", Some("pick_image_file"), false));
+    color_markup.push_str(&button(
+        "Use wallpaper",
+        Some("apply_wallpaper_image"),
+        false,
+    ));
+    color_markup.push_str(&button(
+        "Use screenshot",
+        Some("apply_wallpaper_screenshot"),
+        false,
+    ));
+    out.push_str(&card("Color Source", &color_markup));
+
+    out.push_str(&card(
+        "Debug & Seed",
+        &[
+            action_row("Render mode", &format!("{:?}", settings.mode), "cycle_mode"),
+            action_row(
+                "Pressure mode",
+                &pressure_mode_label(settings.pressure_mode),
+                "toggle_pressure_mode",
+            ),
+            adjust_row(
+                "Clear pressure",
+                &format!("{:.2}", pressure_clear_value(settings.pressure_mode)),
+                "pressure_clear_down",
+                "pressure_clear_up",
+            ),
+            action_row(
+                "Seed",
+                settings.seed.as_deref().unwrap_or("Auto"),
+                "seed_randomize",
+            ),
+            action_row("Clear seed", "Use runtime entropy", "seed_clear"),
+        ]
+        .join(""),
+    ));
+
+    out.push_str(&card(
+        "Fluid",
+        &[
+            adjust_field("Fluid size", settings.fluid_size, "fluid_size"),
+            adjust_field("Fluid FPS", settings.fluid_frame_rate, "fluid_frame_rate"),
+            adjust_field("Fluid timestep", settings.fluid_timestep, "fluid_timestep"),
+            adjust_field("Viscosity", settings.viscosity, "viscosity"),
+            adjust_field(
+                "Velocity dissipation",
+                settings.velocity_dissipation,
+                "velocity_dissipation",
+            ),
+            adjust_field(
+                "Diffusion iterations",
+                settings.diffusion_iterations,
+                "diffusion_iterations",
+            ),
+            adjust_field(
+                "Pressure iterations",
+                settings.pressure_iterations,
+                "pressure_iterations",
+            ),
+        ]
+        .join(""),
+    ));
+
+    out.push_str(&card(
+        "Lines",
+        &[
+            adjust_field("Line length", settings.line_length, "line_length"),
+            adjust_field("Line width", settings.line_width, "line_width"),
+            adjust_field(
+                "Line begin offset",
+                settings.line_begin_offset,
+                "line_begin_offset",
+            ),
+            adjust_field("Line variance", settings.line_variance, "line_variance"),
+            adjust_field("Grid spacing", settings.grid_spacing, "grid_spacing"),
+            adjust_field("View scale", settings.view_scale, "view_scale"),
+        ]
+        .join(""),
+    ));
+
+    out.push_str(&card(
+        "Noise",
+        &[
+            adjust_field(
+                "Noise multiplier",
+                settings.noise_multiplier,
+                "noise_multiplier",
+            ),
+            noise_channel_row(settings, 0),
+            noise_channel_row(settings, 1),
+            noise_channel_row(settings, 2),
+        ]
+        .join(""),
+    ));
+
+    out
 }
 
-/// Spawn the default process (desktop wallpaper engine — same as double-clicking the app).
+fn card(title: &str, inner: &str) -> String {
+    format!(
+        "    div rounded-lg border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3\n      div text-xs font-semibold uppercase tracking-wider text-zinc-500\n        {}\n{}",
+        quoted(title),
+        indent(inner, 3)
+    )
+}
+
+fn action_row(label: &str, value: &str, action: &str) -> String {
+    format!(
+        "div flex items-center justify-between gap-4\n  div flex flex-col min-w-0 flex-1\n    div text-sm font-medium\n      {}\n    div text-xs text-zinc-500\n      {}\n  div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup={}\n    \"Apply\"\n",
+        quoted(label),
+        quoted(value),
+        action
+    )
+}
+
+fn adjust_row(label: &str, value: &str, down_action: &str, up_action: &str) -> String {
+    format!(
+        "div flex items-center justify-between gap-4\n  div flex flex-col min-w-0 flex-1\n    div text-sm font-medium\n      {}\n    div text-xs text-zinc-500\n      {}\n  div flex items-center gap-2 shrink-0\n    div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup={}\n      \"-\"\n    div min-w-20 text-right text-xs text-zinc-300\n      {}\n    div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup={}\n      \"+\"\n",
+        quoted(label),
+        quoted(value),
+        down_action,
+        quoted(value),
+        up_action
+    )
+}
+
+fn adjust_field<T: std::fmt::Display>(label: &str, value: T, field: &str) -> String {
+    adjust_row(
+        label,
+        &value.to_string(),
+        &format!("adjust__{field}__down"),
+        &format!("adjust__{field}__up"),
+    )
+}
+
+fn noise_channel_row(settings: &Settings, index: usize) -> String {
+    let channel = settings.noise_channels.get(index);
+    let scale = channel.map(|c| c.scale).unwrap_or_default();
+    let multiplier = channel.map(|c| c.multiplier).unwrap_or_default();
+    let offset = channel.map(|c| c.offset_increment).unwrap_or_default();
+    let mut markup = String::new();
+    markup.push_str("div rounded-md border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-3\n");
+    markup.push_str("  div text-xs font-semibold uppercase tracking-wide text-zinc-500\n");
+    markup.push_str(&format!(
+        "    {}\n",
+        quoted(&format!("Channel {}", index + 1))
+    ));
+    markup.push_str(&indent(
+        &adjust_row(
+            "Scale",
+            &format!("{scale:.3}"),
+            &format!("noise__{index}__scale__down"),
+            &format!("noise__{index}__scale__up"),
+        ),
+        1,
+    ));
+    markup.push_str(&indent(
+        &adjust_row(
+            "Multiplier",
+            &format!("{multiplier:.3}"),
+            &format!("noise__{index}__multiplier__down"),
+            &format!("noise__{index}__multiplier__up"),
+        ),
+        1,
+    ));
+    markup.push_str(&indent(
+        &adjust_row(
+            "Offset increment",
+            &format!("{offset:.4}"),
+            &format!("noise__{index}__offset_increment__down"),
+            &format!("noise__{index}__offset_increment__up"),
+        ),
+        1,
+    ));
+    markup
+}
+
+fn button(label: &str, action: Option<&str>, active: bool) -> String {
+    let style = if active {
+        "px-3 py-2 rounded-md bg-blue-600 text-xs font-semibold text-white cursor-pointer"
+    } else {
+        "px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer"
+    };
+    match action {
+        Some(action) => format!(
+            "    div {style} @mouseup={action}\n      {}\n",
+            quoted(label)
+        ),
+        None => format!("    div {style}\n      {}\n", quoted(label)),
+    }
+}
+
+fn indent(input: &str, level: usize) -> String {
+    let prefix = "  ".repeat(level);
+    input
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn quoted(input: &str) -> String {
+    format!("\"{}\"", input.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn pressure_mode_label(mode: PressureMode) -> String {
+    match mode {
+        PressureMode::Retain => "Retain".to_string(),
+        PressureMode::ClearWith(value) => format!("ClearWith({value:.2})"),
+    }
+}
+
+fn pressure_clear_value(mode: PressureMode) -> f32 {
+    match mode {
+        PressureMode::Retain => 0.0,
+        PressureMode::ClearWith(value) => value,
+    }
+}
+
 fn spawn_default_wallpaper_process() -> anyhow::Result<()> {
     let exe = std::env::current_exe().context("Resolve current executable")?;
     std::process::Command::new(exe)
@@ -374,35 +801,4 @@ fn spawn_mode(flag: &str) -> anyhow::Result<()> {
         .spawn()
         .with_context(|| format!("Spawn renderer with {flag}"))?;
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_choose_color(initial: [f32; 3]) -> Option<[f32; 3]> {
-    fn to_apple(c: f32) -> i64 {
-        ((c.clamp(0.0, 1.0) * 65535.0).round() as i64).clamp(0, 65535)
-    }
-    let r = to_apple(initial[0]);
-    let g = to_apple(initial[1]);
-    let b = to_apple(initial[2]);
-    let script = format!(
-        "set c to choose color default color {{{r}, {g}, {b}}}\n\
-         return (item 1 of c as text) & \",\" & (item 2 of c as text) & \",\" & (item 3 of c as text)"
-    );
-    let output = std::process::Command::new("osascript")
-        .args(["-e", &script])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = s.trim().split(',').map(|p| p.trim()).collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let parse = |p: &str| -> Option<f32> {
-        let n: i64 = p.parse().ok()?;
-        Some((n as f32 / 65535.0).clamp(0.0, 1.0))
-    };
-    Some([parse(parts[0])?, parse(parts[1])?, parse(parts[2])?])
 }

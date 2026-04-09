@@ -1,14 +1,10 @@
-//! drift-core: platform-independent fluid-simulation rendering for drift-wallpaper-macos.
-//!
-//! This crate provides:
-//! - [`DriftRenderer`]: a wgpu-based renderer for the Drift fluid aesthetic.
-//! - [`DriftParams`]: configurable simulation parameters (speed, scale, colours).
-//! - [`ColorPalette`]: colour preset library and image-based colour extraction.
-
-pub mod color;
+pub mod flux;
+pub mod grid;
+pub mod render;
 pub mod renderer;
-pub mod simulation;
+pub mod rng;
+pub mod settings;
 
-pub use color::{ColorPalette, Preset};
-pub use renderer::DriftRenderer;
-pub use simulation::DriftParams;
+pub use flux::Flux;
+pub use renderer::FluxRenderer;
+pub use settings::{ColorMode, ColorPreset, Mode, Noise, PressureMode, Settings};

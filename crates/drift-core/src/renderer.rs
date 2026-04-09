@@ -1,234 +1,82 @@
-//! wgpu-based renderer for the Drift fluid aesthetic.
-//!
-//! [`DriftRenderer`] owns all GPU resources and exposes a single
-//! [`DriftRenderer::render`] method that draws one frame onto the
-//! configured wgpu surface.
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
-use bytemuck::{Pod, Zeroable};
-use std::time::Instant;
-use wgpu::util::DeviceExt;
 
-use crate::simulation::DriftParams;
+use crate::render;
+use crate::{ColorMode, Flux, Settings};
 
-// ---------------------------------------------------------------------------
-// GPU-side uniform buffer layout
-// Must match the `Uniforms` struct in drift.wgsl (std140 / WGSL alignment).
-// ---------------------------------------------------------------------------
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-struct Uniforms {
-    time: f32,
-    width: f32,
-    height: f32,
-    speed: f32,
-    scale: f32,
-    _pad: [f32; 3], // align to 16 bytes before the first vec3
-    color_a: [f32; 3],
-    _pad0: f32,
-    color_b: [f32; 3],
-    _pad1: f32,
-    color_c: [f32; 3],
-    _pad2: f32,
-}
-
-#[inline]
-fn smooth_color_channel(current: &mut f32, target: f32, mix: f32) {
-    *current += (target - *current) * mix;
-    if (*current - target).abs() < 0.0015 {
-        *current = target;
-    }
-}
-
-impl Uniforms {
-    fn new(params: &DriftParams, time: f32, width: u32, height: u32) -> Self {
-        Self {
-            time,
-            width: width as f32,
-            height: height as f32,
-            speed: params.speed,
-            scale: params.scale,
-            _pad: [0.0; 3],
-            color_a: params.color_a,
-            _pad0: 0.0,
-            color_b: params.color_b,
-            _pad1: 0.0,
-            color_c: params.color_c,
-            _pad2: 0.0,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Renderer
-// ---------------------------------------------------------------------------
-
-/// GPU renderer for the Drift fluid aesthetic.
-///
-/// # Construction
-///
-/// Use [`DriftRenderer::new`] to initialise wgpu internals (adapter, device,
-/// pipeline, …).  The call blocks until the adapter and device are ready.
-///
-/// # Rendering
-///
-/// Call [`DriftRenderer::render`] once per frame.  The renderer updates the
-/// elapsed-time uniform and draws a full-screen triangle to the wgpu surface.
-///
-/// # Resizing
-///
-/// Call [`DriftRenderer::resize`] whenever the window dimensions change.
-pub struct DriftRenderer {
+pub struct FluxRenderer {
     _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-    uniform_buffer: wgpu::Buffer,
+    flux: Flux,
+    settings: Arc<Settings>,
+    loaded_image_path: Option<std::path::PathBuf>,
     start: Instant,
-    /// Colours and timing actually sent to the GPU (smoothly approaches [`Self::target_params`]).
-    display_params: DriftParams,
-    target_params: DriftParams,
-    last_frame: Instant,
 }
 
-impl DriftRenderer {
-    /// Initialise wgpu and create the full rendering pipeline.
-    ///
-    /// `surface` must already be created from the native window; its lifetime
-    /// is tied to the window, so the caller must ensure the window outlives
-    /// this renderer.
+impl FluxRenderer {
     pub fn new(
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
-        width: u32,
-        height: u32,
-        params: DriftParams,
+        logical_width: u32,
+        logical_height: u32,
+        physical_width: u32,
+        physical_height: u32,
+        settings: Settings,
     ) -> Result<Self> {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&surface),
+            power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
         }))
         .context("Failed to find a compatible wgpu adapter")?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("drift-device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: adapter.limits(),
-                memory_hints: Default::default(),
-            },
-            None,
-        ))
+        let limits = wgpu::Limits::default().using_resolution(adapter.limits());
+        let features = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            | wgpu::Features::FLOAT32_FILTERABLE;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("drift-core-device"),
+            required_features: features,
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        }))
         .context("Failed to create wgpu device")?;
 
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(caps.formats[0]);
-
+        let capabilities = surface.get_capabilities(&adapter);
+        let surface_format = preferred_surface_format(&capabilities);
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width,
-            height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
+            format: surface_format,
+            width: physical_width.max(1),
+            height: physical_height.max(1),
+            present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
+            alpha_mode: capabilities.alpha_modes[0],
+            view_formats: vec![],
         };
         surface.configure(&device, &surface_config);
 
-        // Shader
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("drift-shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/drift.wgsl").into()),
-        });
-
-        // Uniform buffer
-        let initial_uniforms = Uniforms::new(&params, 0.0, width, height);
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("drift-uniforms"),
-            contents: bytemuck::bytes_of(&initial_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        // Bind group layout + bind group
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("drift-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("drift-bg"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        // Pipeline layout
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("drift-pipeline-layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        // Render pipeline
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("drift-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        let settings = Arc::new(settings);
+        let mut flux = Flux::new(
+            &device,
+            &queue,
+            surface_format,
+            logical_width.max(1),
+            logical_height.max(1),
+            physical_width.max(1),
+            physical_height.max(1),
+            &settings,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let loaded_image_path = apply_color_mode(&mut flux, &device, &queue, &settings)?;
 
         Ok(Self {
             _instance: instance,
@@ -236,119 +84,118 @@ impl DriftRenderer {
             queue,
             surface,
             surface_config,
-            pipeline,
-            bind_group,
-            uniform_buffer,
+            flux,
+            settings,
+            loaded_image_path,
             start: Instant::now(),
-            display_params: params.clone(),
-            target_params: params,
-            last_frame: Instant::now(),
         })
     }
 
-    /// Update the simulation parameters at runtime (e.g. from the menu bar).
-    ///
-    /// Palette stops ease toward the new colours; speed / scale apply immediately on the GPU.
-    pub fn set_params(&mut self, params: DriftParams) {
-        self.display_params.speed = params.speed;
-        self.display_params.scale = params.scale;
-        self.display_params.target_fps = params.target_fps;
-        self.target_params = params;
+    pub fn set_settings(&mut self, settings: Settings) -> Result<()> {
+        let settings = Arc::new(settings);
+        self.flux.update(&self.device, &self.queue, &settings);
+        self.loaded_image_path =
+            apply_color_mode(&mut self.flux, &self.device, &self.queue, &settings)?;
+        self.settings = settings;
+        Ok(())
     }
 
-    /// Handle window resize.
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.surface_config.width = width;
-        self.surface_config.height = height;
+    pub fn resize(
+        &mut self,
+        logical_width: u32,
+        logical_height: u32,
+        physical_width: u32,
+        physical_height: u32,
+    ) {
+        self.surface_config.width = physical_width.max(1);
+        self.surface_config.height = physical_height.max(1);
         self.surface.configure(&self.device, &self.surface_config);
+        self.flux.resize(
+            &self.device,
+            &self.queue,
+            logical_width.max(1),
+            logical_height.max(1),
+            physical_width.max(1),
+            physical_height.max(1),
+        );
     }
 
-    /// Render one frame.  Returns `false` if the surface is lost (caller
-    /// should recreate the renderer).
     pub fn render(&mut self) -> bool {
-        let now = Instant::now();
-        let raw_dt = (now - self.last_frame).as_secs_f32();
-        self.last_frame = now;
-        let dt = raw_dt.clamp(1.0 / 500.0, 0.25);
-
-        // Exponential blend (Flux-style smooth palette changes, not a hard cut).
-        const LAMBDA: f32 = 9.0;
-        let mix = 1.0 - (-LAMBDA * dt).exp();
-        for i in 0..3 {
-            smooth_color_channel(
-                &mut self.display_params.color_a[i],
-                self.target_params.color_a[i],
-                mix,
-            );
-            smooth_color_channel(
-                &mut self.display_params.color_b[i],
-                self.target_params.color_b[i],
-                mix,
-            );
-            smooth_color_channel(
-                &mut self.display_params.color_c[i],
-                self.target_params.color_c[i],
-                mix,
-            );
-        }
-
-        let elapsed = self.start.elapsed().as_secs_f32();
-        let uniforms = Uniforms::new(
-            &self.display_params,
-            elapsed,
-            self.surface_config.width,
-            self.surface_config.height,
-        );
-        self.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
+            Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                self.surface.configure(&self.device, &self.surface_config);
                 return false;
             }
-            Err(e) => {
-                log::error!("Surface error: {e}");
-                return false;
-            }
+            Err(wgpu::SurfaceError::OutOfMemory) => return false,
+            Err(wgpu::SurfaceError::Timeout) => return true,
+            Err(wgpu::SurfaceError::Other) => return true,
         };
 
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("drift-encoder"),
+                label: Some("drift-core-render"),
             });
 
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("drift-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            rpass.set_pipeline(&self.pipeline);
-            rpass.set_bind_group(0, &self.bind_group, &[]);
-            // Three vertices → one full-screen triangle (no vertex buffer needed).
-            rpass.draw(0..3, 0..1);
-        }
+        self.flux.animate(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            None,
+            self.start.elapsed().as_secs_f64() * 1000.0,
+        );
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.submit(Some(encoder.finish()));
         frame.present();
         true
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn loaded_image_path(&self) -> Option<&Path> {
+        self.loaded_image_path.as_deref()
+    }
+}
+
+fn preferred_surface_format(capabilities: &wgpu::SurfaceCapabilities) -> wgpu::TextureFormat {
+    let preferred = [
+        #[cfg(target_os = "macos")]
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureFormat::Rgb10a2Unorm,
+        wgpu::TextureFormat::Bgra8Unorm,
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    ];
+
+    preferred
+        .into_iter()
+        .find(|format| capabilities.formats.contains(format))
+        .unwrap_or(capabilities.formats[0])
+}
+
+fn apply_color_mode(
+    flux: &mut Flux,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    settings: &Arc<Settings>,
+) -> Result<Option<std::path::PathBuf>> {
+    match &settings.color_mode {
+        ColorMode::ImageFile(path) => {
+            let encoded = std::fs::read(path)
+                .with_context(|| format!("Read Flux color image {}", path.display()))?;
+            let image = render::color::Context::decode_color_texture(&encoded)
+                .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            flux.sample_colors_from_image(device, queue, &image);
+            Ok(Some(path.clone()))
+        }
+        _ => Ok(None),
     }
 }

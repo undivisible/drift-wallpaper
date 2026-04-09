@@ -1,42 +1,61 @@
-//! Application configuration: persisted to `~/Library/Application Support/drift-wallpaper/config.json`
-//! on macOS, or a local `drift-config.json` fallback on other platforms.
-// Items in this module are used only from the macOS-specific code path.
 #![allow(dead_code)]
 
-/// Child settings process (spawned from the tray) skips installing a second menu bar icon.
-pub const SUPPRESS_MENU_BAR_TRAY_ENV: &str = "DRIFT_SUPPRESS_MENU_BAR_TRAY";
-
-use anyhow::{Context, Result};
-use drift_core::{
-    color::{ColorPalette, Preset},
-    simulation::DriftParams,
-};
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-/// Top-level application config persisted to disk.
+use anyhow::{Context, Result};
+use drift_core::{ColorMode, ColorPreset, Settings};
+use serde::{Deserialize, Serialize};
+
+pub const SUPPRESS_MENU_BAR_TRAY_ENV: &str = "DRIFT_SUPPRESS_MENU_BAR_TRAY";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorMode {
+    #[default]
+    Linked,
+    Independent,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorConfig {
+    pub monitor_id: String,
+    pub name_hint: String,
+    pub flux_settings: Settings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredMonitor {
+    pub id: String,
+    pub name_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfig {
-    /// Whether the live wallpaper is currently enabled.
     pub enabled: bool,
-    /// Simulation parameters (speed, scale, colours).
-    pub params: DriftParams,
-    /// Launch at system login.
     pub launch_at_login: bool,
+    pub monitor_mode: MonitorMode,
+    pub shared_profile: Settings,
+    pub monitors: BTreeMap<String, MonitorConfig>,
+    pub selected_monitor_id: Option<String>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            params: DriftParams::from_palette(&ColorPalette::preset(Preset::FluxOriginal), 1.0),
             launch_at_login: false,
+            monitor_mode: MonitorMode::Linked,
+            shared_profile: Settings::default(),
+            monitors: BTreeMap::new(),
+            selected_monitor_id: None,
         }
     }
 }
 
 impl AppConfig {
-    /// Return the path to the config file.
     pub fn config_path() -> PathBuf {
         #[cfg(target_os = "macos")]
         {
@@ -53,32 +72,168 @@ impl AppConfig {
         }
     }
 
-    /// Load from disk, returning the default config if the file does not exist.
     pub fn load() -> Self {
         Self::try_load().unwrap_or_default()
     }
 
-    /// Load from disk, returning an error if parsing or reading fails.
     pub fn try_load() -> Result<Self> {
         let path = Self::config_path();
         match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                serde_json::from_str(&content).with_context(|| format!("parse config {path:?}"))
-            }
+            Ok(content) => match serde_json::from_str::<Self>(&content) {
+                Ok(mut config) => {
+                    config.normalize();
+                    Ok(config)
+                }
+                Err(_) => Ok(Self::default()),
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("read config {path:?}")),
         }
     }
 
-    /// Persist the config to disk.  Creates parent directories if needed.
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("create config dir {dir:?}"))?;
         }
-        let json = serde_json::to_string_pretty(self).context("serialise config")?;
-        std::fs::write(&path, json).with_context(|| format!("write config {path:?}"))?;
+
+        let json = serde_json::to_vec_pretty(self).context("serialise config")?;
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, json).with_context(|| format!("write config {tmp_path:?}"))?;
+        std::fs::rename(&tmp_path, &path)
+            .with_context(|| format!("replace config {path:?} from {tmp_path:?}"))?;
         Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        if self.shared_profile.noise_channels.is_empty() {
+            self.shared_profile = Settings::default();
+        }
+
+        if self.monitors.is_empty() {
+            self.selected_monitor_id = None;
+        } else if self
+            .selected_monitor_id
+            .as_ref()
+            .is_none_or(|id| !self.monitors.contains_key(id))
+        {
+            self.selected_monitor_id = self.monitors.keys().next().cloned();
+        }
+    }
+
+    pub fn ensure_monitors(&mut self, monitors: &[DiscoveredMonitor]) -> bool {
+        let mut changed = false;
+        for monitor in monitors {
+            let entry = self
+                .monitors
+                .entry(monitor.id.clone())
+                .or_insert_with(|| MonitorConfig {
+                    monitor_id: monitor.id.clone(),
+                    name_hint: monitor.name_hint.clone(),
+                    flux_settings: self.shared_profile.clone(),
+                });
+            if entry.name_hint != monitor.name_hint {
+                entry.name_hint = monitor.name_hint.clone();
+                changed = true;
+            }
+        }
+
+        if self.selected_monitor_id.is_none() {
+            self.selected_monitor_id = monitors.first().map(|monitor| monitor.id.clone());
+            changed = changed || self.selected_monitor_id.is_some();
+        }
+
+        changed
+    }
+
+    pub fn selected_monitor_id(&self) -> Option<&str> {
+        self.selected_monitor_id.as_deref()
+    }
+
+    pub fn select_monitor(&mut self, monitor_id: impl Into<String>) {
+        self.selected_monitor_id = Some(monitor_id.into());
+    }
+
+    pub fn selected_monitor_name(&self) -> String {
+        self.selected_monitor_id()
+            .and_then(|id| self.monitors.get(id))
+            .map(|monitor| monitor.name_hint.clone())
+            .unwrap_or_else(|| "Shared profile".to_string())
+    }
+
+    pub fn active_profile(&self) -> &Settings {
+        if self.monitor_mode == MonitorMode::Linked {
+            &self.shared_profile
+        } else {
+            self.selected_monitor_id()
+                .and_then(|id| self.monitors.get(id))
+                .map(|monitor| &monitor.flux_settings)
+                .unwrap_or(&self.shared_profile)
+        }
+    }
+
+    pub fn active_profile_mut(&mut self) -> &mut Settings {
+        if self.monitor_mode == MonitorMode::Linked {
+            &mut self.shared_profile
+        } else {
+            let id = self
+                .selected_monitor_id
+                .clone()
+                .or_else(|| self.monitors.keys().next().cloned())
+                .unwrap_or_else(|| {
+                    let monitor_id = "display-1".to_string();
+                    self.monitors.insert(
+                        monitor_id.clone(),
+                        MonitorConfig {
+                            monitor_id: monitor_id.clone(),
+                            name_hint: "Display 1".to_string(),
+                            flux_settings: self.shared_profile.clone(),
+                        },
+                    );
+                    self.selected_monitor_id = Some(monitor_id.clone());
+                    monitor_id
+                });
+            self.selected_monitor_id = Some(id.clone());
+            &mut self
+                .monitors
+                .entry(id.clone())
+                .or_insert_with(|| MonitorConfig {
+                    monitor_id: id.clone(),
+                    name_hint: id.clone(),
+                    flux_settings: self.shared_profile.clone(),
+                })
+                .flux_settings
+        }
+    }
+
+    pub fn settings_for_monitor(&self, monitor_id: &str) -> Settings {
+        match self.monitor_mode {
+            MonitorMode::Linked => self.shared_profile.clone(),
+            MonitorMode::Independent => self
+                .monitors
+                .get(monitor_id)
+                .map(|monitor| monitor.flux_settings.clone())
+                .unwrap_or_else(|| self.shared_profile.clone()),
+        }
+    }
+
+    pub fn set_monitor_mode(&mut self, mode: MonitorMode) {
+        self.monitor_mode = mode;
+        if mode == MonitorMode::Linked {
+            self.sync_linked_monitors();
+        }
+    }
+
+    pub fn apply_preset_to_active(&mut self, preset: ColorPreset) {
+        self.active_profile_mut().color_mode = ColorMode::Preset(preset);
+    }
+
+    pub fn sync_linked_monitors(&mut self) {
+        if self.monitor_mode == MonitorMode::Linked {
+            for monitor in self.monitors.values_mut() {
+                monitor.flux_settings = self.shared_profile.clone();
+            }
+        }
     }
 }
 
@@ -86,18 +241,60 @@ impl AppConfig {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_config_is_valid() {
-        let cfg = AppConfig::default();
-        assert!(cfg.params.speed > 0.0);
+    fn monitor(id: &str, name: &str) -> DiscoveredMonitor {
+        DiscoveredMonitor {
+            id: id.to_string(),
+            name_hint: name.to_string(),
+        }
     }
 
     #[test]
-    fn config_roundtrip_json() {
-        let cfg = AppConfig::default();
-        let json = serde_json::to_string(&cfg).unwrap();
-        let cfg2: AppConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(cfg.enabled, cfg2.enabled);
-        assert_eq!(cfg.launch_at_login, cfg2.launch_at_login);
+    fn roundtrip_linked_config() {
+        let mut config = AppConfig::default();
+        config.ensure_monitors(&[monitor("one", "Display 1")]);
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.monitor_mode, MonitorMode::Linked);
+        assert_eq!(decoded.shared_profile, config.shared_profile);
+    }
+
+    #[test]
+    fn roundtrip_independent_monitors() {
+        let mut config = AppConfig {
+            monitor_mode: MonitorMode::Independent,
+            ..AppConfig::default()
+        };
+        config.ensure_monitors(&[monitor("one", "Display 1"), monitor("two", "Display 2")]);
+        config.select_monitor("two");
+        config.active_profile_mut().line_width = 12.0;
+        let json = serde_json::to_string(&config).unwrap();
+        let decoded: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.monitor_mode, MonitorMode::Independent);
+        assert_eq!(decoded.monitors["two"].flux_settings.line_width, 12.0);
+    }
+
+    #[test]
+    fn active_profile_selection_persists_in_independent_mode() {
+        let mut config = AppConfig {
+            monitor_mode: MonitorMode::Independent,
+            ..AppConfig::default()
+        };
+        config.ensure_monitors(&[monitor("one", "Display 1"), monitor("two", "Display 2")]);
+        config.selected_monitor_id = None;
+        let _ = config.active_profile_mut();
+        assert!(config.selected_monitor_id.is_some());
+    }
+
+    #[test]
+    fn missing_config_defaults_to_flux() {
+        let config = AppConfig::default();
+        assert_eq!(config.shared_profile, Settings::default());
+    }
+
+    #[test]
+    fn legacy_shape_is_ignored() {
+        let legacy = r#"{"enabled":true,"params":{"speed":1.0}}"#;
+        let decoded = serde_json::from_str::<AppConfig>(legacy);
+        assert!(decoded.is_err());
     }
 }
