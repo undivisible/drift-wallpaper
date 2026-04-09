@@ -1,4 +1,9 @@
 //! Colour palette management: built-in presets and image-based extraction.
+//!
+//! Flux-inspired presets (`FluxPlasma`, `FluxPoolside`, `FluxFreedom`) use three stops sampled
+//! from the MIT-licensed colour wheels in [sandydoo/flux](https://github.com/sandydoo/flux)
+//! (`flux/src/settings.rs`, `flux-gl/flux/src/settings.rs`). `FluxOriginal` is an approximate
+//! macOS Drift–style cool gradient (not meant as a byte-identical match to Apple’s shader).
 
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
@@ -7,6 +12,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Preset {
+    /// Cool indigo → sky → pale cyan (Drift-like default accent).
+    FluxOriginal,
+    /// Stops sampled from Flux’s Plasma wheel (indices 0, 2, 4).
+    FluxPlasma,
+    /// Stops sampled from Flux’s Poolside wheel.
+    FluxPoolside,
+    /// Blue ↔ yellow emphasis from Flux’s Freedom wheel.
+    FluxFreedom,
     Ocean,
     Sunset,
     Forest,
@@ -19,6 +32,10 @@ impl Preset {
     /// Return a short human-readable label.
     pub fn label(self) -> &'static str {
         match self {
+            Self::FluxOriginal => "Original",
+            Self::FluxPlasma => "Plasma",
+            Self::FluxPoolside => "Poolside",
+            Self::FluxFreedom => "Freedom",
             Self::Ocean => "Ocean",
             Self::Sunset => "Sunset",
             Self::Forest => "Forest",
@@ -31,6 +48,10 @@ impl Preset {
     /// All available presets, in display order.
     pub fn all() -> &'static [Preset] {
         &[
+            Self::FluxOriginal,
+            Self::FluxPlasma,
+            Self::FluxPoolside,
+            Self::FluxFreedom,
             Self::Ocean,
             Self::Sunset,
             Self::Forest,
@@ -39,6 +60,54 @@ impl Preset {
             Self::Monochrome,
         ]
     }
+}
+
+/// One RGBA stop from Flux’s flat `[r,g,b,a, …]` colour wheel (`f32` 0–1).
+#[inline]
+fn flux_stop(wheel: &[f32], index: usize) -> [f32; 3] {
+    let o = index * 4;
+    [
+        wheel[o].clamp(0.0, 1.0),
+        wheel[o + 1].clamp(0.0, 1.0),
+        wheel[o + 2].clamp(0.0, 1.0),
+    ]
+}
+
+// Flux `COLOR_SCHEME_*` arrays from sandydoo/flux (MIT).
+#[rustfmt::skip]
+const FLUX_PLASMA: [f32; 24] = [
+    60.219 / 255.0, 37.2487 / 255.0, 66.4301 / 255.0, 1.0,
+    170.962 / 255.0, 54.4873 / 255.0, 50.9661 / 255.0, 1.0,
+    230.299 / 255.0, 39.2759 / 255.0, 5.54531 / 255.0, 1.0,
+    242.924 / 255.0, 94.3563 / 255.0, 22.4186 / 255.0, 1.0,
+    242.435 / 255.0, 156.752 / 255.0, 58.9794 / 255.0, 1.0,
+    135.291 / 255.0, 152.793 / 255.0, 182.473 / 255.0, 1.0,
+];
+#[rustfmt::skip]
+const FLUX_POOLSIDE: [f32; 24] = [
+    76.0 / 255.0, 156.0 / 255.0, 228.0 / 255.0, 1.0,
+    140.0 / 255.0, 204.0 / 255.0, 244.0 / 255.0, 1.0,
+    108.0 / 255.0, 180.0 / 255.0, 236.0 / 255.0, 1.0,
+    188.0 / 255.0, 228.0 / 255.0, 244.0 / 255.0, 1.0,
+    124.0 / 255.0, 220.0 / 255.0, 236.0 / 255.0, 1.0,
+    156.0 / 255.0, 208.0 / 255.0, 236.0 / 255.0, 1.0,
+];
+#[rustfmt::skip]
+const FLUX_FREEDOM: [f32; 24] = [
+    0.0 / 255.0, 87.0 / 255.0, 183.0 / 255.0, 1.0,
+    0.0 / 255.0, 87.0 / 255.0, 183.0 / 255.0, 1.0,
+    0.0 / 255.0, 87.0 / 255.0, 183.0 / 255.0, 1.0,
+    1.0, 215.0 / 255.0, 0.0, 1.0,
+    1.0, 215.0 / 255.0, 0.0, 1.0,
+    1.0, 215.0 / 255.0, 0.0, 1.0,
+];
+
+fn flux_palette_triple(wheel: &[f32; 24]) -> [[f32; 3]; 3] {
+    [
+        flux_stop(wheel, 0),
+        flux_stop(wheel, 2),
+        flux_stop(wheel, 4),
+    ]
 }
 
 /// A three-stop colour palette used by the Drift renderer.
@@ -54,6 +123,14 @@ impl ColorPalette {
     /// Create a palette from a named preset.
     pub fn preset(p: Preset) -> Self {
         let stops = match p {
+            Preset::FluxOriginal => [[0.02, 0.04, 0.18], [0.12, 0.38, 0.72], [0.85, 0.94, 0.98]],
+            Preset::FluxPlasma => flux_palette_triple(&FLUX_PLASMA),
+            Preset::FluxPoolside => flux_palette_triple(&FLUX_POOLSIDE),
+            Preset::FluxFreedom => [
+                flux_stop(&FLUX_FREEDOM, 0),
+                flux_stop(&FLUX_FREEDOM, 2),
+                flux_stop(&FLUX_FREEDOM, 4),
+            ],
             Preset::Ocean => [[0.02, 0.04, 0.25], [0.03, 0.35, 0.65], [0.60, 0.95, 0.98]],
             Preset::Sunset => [[0.10, 0.03, 0.20], [0.80, 0.25, 0.10], [0.99, 0.85, 0.30]],
             Preset::Forest => [[0.02, 0.12, 0.04], [0.10, 0.45, 0.10], [0.70, 0.90, 0.30]],

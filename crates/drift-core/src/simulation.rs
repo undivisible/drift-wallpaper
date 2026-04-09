@@ -24,12 +24,13 @@ pub struct DriftParams {
 
 impl Default for DriftParams {
     fn default() -> Self {
+        let stops = crate::color::ColorPalette::preset(crate::color::Preset::FluxOriginal).colors();
         Self {
             speed: 1.0,
             scale: 1.0,
-            color_a: [0.09, 0.05, 0.29], // deep violet
-            color_b: [0.20, 0.60, 0.86], // sky blue
-            color_c: [0.98, 0.80, 0.40], // warm gold
+            color_a: stops[0],
+            color_b: stops[1],
+            color_c: stops[2],
             target_fps: 60,
         }
     }
