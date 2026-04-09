@@ -1,6 +1,6 @@
 //! Colour palette management: built-in presets and image-based extraction.
 //!
-//! Flux-inspired presets (`FluxPlasma`, `FluxPoolside`, `FluxFreedom`) use three stops sampled
+//! Drift-inspired presets (`FluxPlasma`, `FluxPoolside`, `FluxFreedom`) use three stops sampled
 //! from the MIT-licensed colour wheels in [sandydoo/flux](https://github.com/sandydoo/flux)
 //! (`flux/src/settings.rs`, `flux-gl/flux/src/settings.rs`). `FluxOriginal` is an approximate
 //! macOS Drift–style cool gradient (not meant as a byte-identical match to Apple’s shader).
@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 pub enum Preset {
     /// Cool indigo → sky → pale cyan (Drift-like default accent).
     FluxOriginal,
-    /// Stops sampled from Flux’s Plasma wheel (indices 0, 2, 4).
+    /// Stops sampled from the historical Flux Plasma wheel (indices 0, 2, 4).
     FluxPlasma,
-    /// Stops sampled from Flux’s Poolside wheel.
+    /// Stops sampled from the historical Flux Poolside wheel.
     FluxPoolside,
-    /// Blue ↔ yellow emphasis from Flux’s Freedom wheel.
+    /// Blue ↔ yellow emphasis from the historical Flux Freedom wheel.
     FluxFreedom,
     Ocean,
     Sunset,
@@ -172,7 +172,7 @@ impl ColorPalette {
             return Self::preset(Preset::Midnight);
         }
 
-        let stops = median_cut_3(&pixels);
+        let stops = refine_extracted_stops(median_cut_3(&pixels));
         Self {
             stops,
             label: Some("Custom (image)".to_owned()),
@@ -254,6 +254,116 @@ fn average(pixels: &[[f32; 3]]) -> [f32; 3] {
         [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]]
     });
     [sum[0] / n, sum[1] / n, sum[2] / n]
+}
+
+/// Re-order extracted stops dark → accent → highlight, then push chroma on the mid tone and
+/// tame washed-out highlights so palettes read closer to “accent-led” than gray / white.
+fn refine_extracted_stops(stops: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let mut v = [stops[0], stops[1], stops[2]];
+    v.sort_by(|a, b| {
+        relative_luminance_srgb(*a)
+            .partial_cmp(&relative_luminance_srgb(*b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut dark = clamp3(v[0]);
+    let accent = boost_accent_color(clamp3(v[1]));
+    let mut light = clamp3(v[2]);
+
+    let lum_light = relative_luminance_srgb(light);
+    if lum_light > 0.82 {
+        light = lerp3(light, accent, 0.38);
+    }
+
+    let lum_dark = relative_luminance_srgb(dark);
+    if lum_dark > 0.55 {
+        dark = lerp3(dark, accent, 0.22);
+    }
+
+    [dark, accent, clamp3(light)]
+}
+
+#[inline]
+fn relative_luminance_srgb(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    let t = t.clamp(0.0, 1.0);
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+fn boost_accent_color(rgb: [f32; 3]) -> [f32; 3] {
+    let (h, s, l) = rgb_to_hsl(rgb);
+    let s = (s * 1.5).min(1.0);
+    let mut l = l;
+    if l > 0.72 {
+        l = l * 0.88 + 0.06;
+    }
+    if l < 0.1 {
+        l = 0.1;
+    }
+    clamp3(hsl_to_rgb(h, s, l))
+}
+
+/// sRGB 0–1 → HSL with H in radians-style 0..2π for stability, S/L in 0–1.
+fn rgb_to_hsl(rgb: [f32; 3]) -> (f32, f32, f32) {
+    let max = rgb[0].max(rgb[1]).max(rgb[2]);
+    let min = rgb[0].min(rgb[1]).min(rgb[2]);
+    let d = max - min;
+    let l = (max + min) * 0.5;
+
+    if d <= 1e-6 {
+        return (0.0, 0.0, l);
+    }
+
+    let s = if l >= 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
+
+    let mut h = if (max - rgb[0]).abs() < 1e-6 {
+        (rgb[1] - rgb[2]) / d + if rgb[1] < rgb[2] { 6.0 } else { 0.0 }
+    } else if (max - rgb[1]).abs() < 1e-6 {
+        (rgb[2] - rgb[0]) / d + 2.0
+    } else {
+        (rgb[0] - rgb[1]) / d + 4.0
+    };
+    h /= 6.0;
+    h *= std::f32::consts::TAU;
+    (h, s.clamp(0.0, 1.0), l.clamp(0.0, 1.0))
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
+    let h = (h / std::f32::consts::TAU).rem_euclid(1.0);
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+
+    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
+    let g = hue_to_rgb(p, q, h);
+    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
+    [r, g, b]
+}
+
+fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
+    t = t.rem_euclid(1.0);
+    if t < 1.0 / 6.0 {
+        p + (q - p) * 6.0 * t
+    } else if t < 0.5 {
+        q
+    } else if t < 2.0 / 3.0 {
+        p + (q - p) * (2.0 / 3.0 - t) * 6.0
+    } else {
+        p
+    }
 }
 
 // ---------------------------------------------------------------------------

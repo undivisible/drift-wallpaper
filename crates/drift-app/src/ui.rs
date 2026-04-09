@@ -1,12 +1,16 @@
+#![allow(dead_code)]
+
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
-use crepuscularity_runtime::{
-    parse_component_file, render_nodes_interactive, ComponentFile, CrepusMouseDispatch,
-    TemplateContext,
-};
-use drift_core::{ColorMode, ColorPreset, Mode, PressureMode, Settings};
+use crepuscularity_runtime::{parse_component_file, ComponentFile, TemplateContext};
+
+use crate::crepus_interactive::CrepusMouseDispatch;
+use crate::crepus_settings_render::render_nodes_interactive;
+use drift_core::settings::{COLOR_SCHEME_PLASMA, COLOR_SCHEME_POOLSIDE};
+use drift_core::{ColorMode, ColorPreset, Mode, NowPlayingSource, PressureMode, Settings};
 use gpui::{
     actions, bounds, div, point, px, rgb, size, App as GpuiApp, AppContext, Application, Context,
     IntoElement, KeyBinding, MouseUpEvent, ParentElement, PathPromptOptions, Render, Styled,
@@ -15,17 +19,21 @@ use gpui::{
 
 use crate::{
     cli,
-    config::{AppConfig, MonitorMode, SUPPRESS_MENU_BAR_TRAY_ENV},
+    config::{AppConfig, MonitorMode, WallpaperLayout},
 };
 
 #[cfg(target_os = "macos")]
 use crate::menubar;
+
+#[cfg(target_os = "macos")]
+use crate::config::SUPPRESS_MENU_BAR_TRAY_ENV;
 
 actions!(drift_app_actions, [Quit]);
 
 pub fn run_ui(initial_config: AppConfig) -> Result<()> {
     let shared = Arc::new(Mutex::new(initial_config));
     let shared_window = Arc::clone(&shared);
+    #[cfg(target_os = "macos")]
     let show_menu_bar_tray = std::env::var_os(SUPPRESS_MENU_BAR_TRAY_ENV).is_none();
 
     Application::new().run(move |cx: &mut GpuiApp| {
@@ -40,7 +48,7 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
             menubar::create_status_item(mtm, Arc::clone(&shared))
         });
 
-        let bounds = bounds(point(px(88.), px(72.)), size(px(820.), px(860.)));
+        let bounds = bounds(point(px(88.), px(72.)), size(px(600.), px(700.)));
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,
@@ -53,7 +61,7 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
             display_id: None,
             window_background: gpui::WindowBackgroundAppearance::Opaque,
             app_id: Some("drift-wallpaper.controls".to_string()),
-            window_min_size: Some(size(px(640.), px(700.))),
+            window_min_size: Some(size(px(520.), px(560.))),
             window_decorations: None,
             tabbing_identifier: None,
         };
@@ -72,11 +80,15 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
 
 struct DriftUi {
     config: Arc<Mutex<AppConfig>>,
+    config_refresh_started: bool,
 }
 
 impl DriftUi {
     fn new(config: Arc<Mutex<AppConfig>>, _cx: &mut Context<Self>) -> Self {
-        Self { config }
+        Self {
+            config,
+            config_refresh_started: false,
+        }
     }
 
     fn read_config(&self) -> AppConfig {
@@ -130,6 +142,17 @@ impl DriftUi {
         });
     }
 
+    fn toggle_wallpaper_layout(&mut self, cx: &mut Context<Self>) {
+        self.modify_config(cx, |cfg| {
+            let next = match cfg.wallpaper_layout {
+                WallpaperLayout::PerMonitor => WallpaperLayout::SpanDisplays,
+                WallpaperLayout::SpanDisplays => WallpaperLayout::PerMonitor,
+            };
+            cfg.set_wallpaper_layout(next);
+            Ok(())
+        });
+    }
+
     fn update_settings(&mut self, cx: &mut Context<Self>, mutator: impl FnOnce(&mut Settings)) {
         self.modify_config(cx, |cfg| {
             mutator(cfg.active_profile_mut());
@@ -161,6 +184,15 @@ impl DriftUi {
             PressureMode::Retain => PressureMode::ClearWith(0.0),
             PressureMode::ClearWith(_) => PressureMode::Retain,
         };
+    }
+
+    fn set_now_playing_source(&mut self, source: NowPlayingSource, cx: &mut Context<Self>) {
+        self.modify_config(cx, |cfg| {
+            cfg.ui_accent_override = None;
+            cfg.now_playing_accent_hex = None;
+            cfg.active_profile_mut().color_mode = ColorMode::NowPlaying(source);
+            Ok(())
+        });
     }
 
     fn random_seed() -> String {
@@ -220,6 +252,7 @@ impl DriftUi {
                 let _ = cx;
             }
             "toggle_link_mode" => self.toggle_link_mode(cx),
+            "toggle_wallpaper_layout" => self.toggle_wallpaper_layout(cx),
             "open_background" => {
                 if let Err(error) = spawn_default_wallpaper_process() {
                     log::warn!("launch wallpaper: {error}");
@@ -235,17 +268,44 @@ impl DriftUi {
             "pick_image_file" => self.pick_image_file(cx),
             "apply_wallpaper_image" => self.apply_current_wallpaper(cx),
             "apply_wallpaper_screenshot" => self.apply_wallpaper_screenshot(cx),
-            "set_preset_original" => self.update_settings(cx, |settings| {
-                settings.color_mode = ColorMode::Preset(ColorPreset::Original)
+            "set_now_playing_automatic" => {
+                self.set_now_playing_source(NowPlayingSource::Automatic, cx)
+            }
+            "set_now_playing_apple_music" => {
+                self.set_now_playing_source(NowPlayingSource::AppleMusic, cx)
+            }
+            "set_now_playing_spotify" => self.set_now_playing_source(NowPlayingSource::Spotify, cx),
+            _ if action.starts_with("pick_palette_swatch__") => {
+                if let Some(index) = action
+                    .strip_prefix("pick_palette_swatch__")
+                    .and_then(|value| value.parse::<usize>().ok())
+                {
+                    self.pick_palette_swatch(index, cx);
+                }
+            }
+            "set_preset_original" => self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cfg.active_profile_mut().color_mode = ColorMode::Preset(ColorPreset::Original);
+                Ok(())
             }),
-            "set_preset_plasma" => self.update_settings(cx, |settings| {
-                settings.color_mode = ColorMode::Preset(ColorPreset::Plasma)
+            "set_preset_plasma" => self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cfg.active_profile_mut().color_mode = ColorMode::Preset(ColorPreset::Plasma);
+                Ok(())
             }),
-            "set_preset_poolside" => self.update_settings(cx, |settings| {
-                settings.color_mode = ColorMode::Preset(ColorPreset::Poolside)
+            "set_preset_poolside" => self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cfg.active_profile_mut().color_mode = ColorMode::Preset(ColorPreset::Poolside);
+                Ok(())
             }),
-            "set_preset_freedom" => self.update_settings(cx, |settings| {
-                settings.color_mode = ColorMode::Preset(ColorPreset::Freedom)
+            "set_preset_freedom" => self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cfg.active_profile_mut().color_mode = ColorMode::Preset(ColorPreset::Freedom);
+                Ok(())
             }),
             "cycle_mode" => self.update_settings(cx, Self::cycle_mode),
             "toggle_pressure_mode" => self.update_settings(cx, Self::cycle_pressure_mode),
@@ -356,6 +416,12 @@ impl DriftUi {
             ("noise_multiplier", "up") => {
                 Self::bump_f32(&mut settings.noise_multiplier, 0.05, 0.0, 5.0)
             }
+            ("wallpaper_brightness", "down") => {
+                Self::bump_f32(&mut settings.wallpaper_brightness, -0.05, 0.05, 2.0)
+            }
+            ("wallpaper_brightness", "up") => {
+                Self::bump_f32(&mut settings.wallpaper_brightness, 0.05, 0.05, 2.0)
+            }
             _ => {}
         });
     }
@@ -400,14 +466,22 @@ impl DriftUi {
             let Some(path) = paths.first() else {
                 return;
             };
-            self.modify_config(cx, |cfg| cli::apply_image_color_mode(cfg, path));
+            self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cli::apply_image_color_mode(cfg, path)
+            });
         }
     }
 
     fn apply_current_wallpaper(&mut self, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         {
-            self.modify_config(cx, cli::apply_current_wallpaper_color_mode);
+            self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cli::apply_current_wallpaper_color_mode(cfg)
+            });
         }
         #[cfg(not(target_os = "macos"))]
         let _ = cx;
@@ -416,10 +490,58 @@ impl DriftUi {
     fn apply_wallpaper_screenshot(&mut self, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         {
-            self.modify_config(cx, cli::apply_wallpaper_screenshot_color_mode);
+            self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = None;
+                cfg.now_playing_accent_hex = None;
+                cli::apply_wallpaper_screenshot_color_mode(cfg)
+            });
         }
         #[cfg(not(target_os = "macos"))]
         let _ = cx;
+    }
+
+    fn pick_palette_swatch(&mut self, index: usize, cx: &mut Context<Self>) {
+        let cfg = self.read_config();
+        let hexes = palette_wheel_hexes(cfg.active_profile());
+        if let Some(hex) = hexes.get(index) {
+            let hex = hex.clone();
+            self.modify_config(cx, |cfg| {
+                cfg.ui_accent_override = Some(hex.clone());
+                Ok(())
+            });
+            #[cfg(target_os = "macos")]
+            crate::color_picker::open_accent_color_panel(Arc::clone(&self.config), &hex);
+        }
+    }
+
+    fn start_config_refresh_loop(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let config = Arc::clone(&self.config);
+        let path = AppConfig::config_path();
+        std::mem::drop(window.spawn(cx, async move |cx| {
+            let mut last_modified = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok();
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+
+                let modified = std::fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok();
+                if modified == last_modified {
+                    continue;
+                }
+                last_modified = modified;
+
+                if let Ok(latest) = AppConfig::try_load() {
+                    if let Ok(mut current) = config.lock() {
+                        *current = latest;
+                    }
+                    let _ = cx.update(|window, _| window.refresh());
+                }
+            }
+        }));
     }
 }
 
@@ -436,9 +558,30 @@ impl CrepusMouseDispatch for DriftUi {
 }
 
 impl Render for DriftUi {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.config_refresh_started {
+            self.config_refresh_started = true;
+            self.start_config_refresh_loop(window, cx);
+        }
+
         let cfg = self.read_config();
-        let source = build_settings_template(&cfg);
+        let template_path = settings_template_path();
+        let source = match std::fs::read_to_string(&template_path) {
+            Ok(source) => source,
+            Err(error) => {
+                return div()
+                    .w_full()
+                    .h_full()
+                    .p(px(16.))
+                    .text_color(rgb(0xf87171))
+                    .child(format!(
+                        "Settings template error:\nFailed to read {:?}: {error}",
+                        template_path
+                    ))
+                    .into_any_element();
+            }
+        };
+
         let component_file: ComponentFile = match parse_component_file(&source) {
             Ok(file) => file,
             Err(error) => {
@@ -462,8 +605,348 @@ impl Render for DriftUi {
                 .into_any_element();
         };
 
-        let tctx = TemplateContext::new();
-        render_nodes_interactive(&root.nodes, &tctx, cx)
+        let tctx = build_settings_context(&cfg);
+        let body = render_nodes_interactive(&root.nodes, &tctx, cx);
+        let viewport_h = window.bounds().size.height;
+        div()
+            .w_full()
+            .h(viewport_h)
+            .flex()
+            .flex_col()
+            .min_h(px(0.))
+            .child(body)
+            .into_any_element()
+    }
+}
+
+fn settings_template_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("views")
+        .join("settings_ui.crepus")
+}
+
+fn build_settings_context(cfg: &AppConfig) -> TemplateContext {
+    let settings = cfg.active_profile();
+    let mut tctx = TemplateContext::new();
+    tctx.base_dir = settings_template_path().parent().map(|p| p.to_path_buf());
+
+    tctx.set("enabled", cfg.enabled);
+    tctx.set("launch_at_login", cfg.launch_at_login);
+    tctx.set("macos", cfg!(target_os = "macos"));
+    tctx.set(
+        "monitor_mode_linked",
+        cfg.monitor_mode == MonitorMode::Linked,
+    );
+    tctx.set(
+        "wallpaper_layout_spanned",
+        cfg.wallpaper_layout == WallpaperLayout::SpanDisplays,
+    );
+    tctx.set("selected_monitor_name", cfg.selected_monitor_name());
+
+    let monitor_status = if cfg.monitor_mode == MonitorMode::Linked {
+        "Shared profile across every display.".to_string()
+    } else {
+        format!("Selected display: {}", cfg.selected_monitor_name())
+    };
+    tctx.set("monitor_status", monitor_status);
+
+    let (source_label, source_detail, source_is_image, source_is_now_playing) =
+        match &settings.color_mode {
+            ColorMode::Preset(preset) => (
+                format!(
+                    "Preset: {}",
+                    match preset {
+                        ColorPreset::Original => "Original",
+                        ColorPreset::Plasma => "Plasma",
+                        ColorPreset::Poolside => "Poolside",
+                        ColorPreset::Freedom => "Freedom",
+                    }
+                ),
+                "Built-in palette".to_string(),
+                false,
+                false,
+            ),
+            ColorMode::ImageFile(path) => (
+                "Image source".to_string(),
+                path.display().to_string(),
+                true,
+                false,
+            ),
+            ColorMode::NowPlaying(source) => (
+                format!("Now playing: {}", source.label()),
+                "Album art from the active music app".to_string(),
+                false,
+                true,
+            ),
+        };
+    tctx.set("color_source_label", source_label);
+    tctx.set("color_source_detail", source_detail);
+    tctx.set("color_source_is_image", source_is_image);
+    tctx.set("color_source_is_now_playing", source_is_now_playing);
+    tctx.set(
+        "now_playing_automatic_active",
+        matches!(
+            settings.color_mode,
+            ColorMode::NowPlaying(NowPlayingSource::Automatic)
+        ),
+    );
+    tctx.set(
+        "now_playing_apple_music_active",
+        matches!(
+            settings.color_mode,
+            ColorMode::NowPlaying(NowPlayingSource::AppleMusic)
+        ),
+    );
+    tctx.set(
+        "now_playing_spotify_active",
+        matches!(
+            settings.color_mode,
+            ColorMode::NowPlaying(NowPlayingSource::Spotify)
+        ),
+    );
+
+    let [color_a_hex, color_b_hex, color_c_hex] = palette_hexes(settings);
+    tctx.set("color_a_hex", color_a_hex);
+    tctx.set("color_b_hex", color_b_hex);
+    tctx.set("color_c_hex", color_c_hex);
+    let accent = accent_hex(
+        settings,
+        cfg.ui_accent_override.as_deref(),
+        cfg.now_playing_accent_hex.as_deref(),
+    );
+    tctx.set("accent", accent.clone());
+    tctx.set("accent_hex", accent.clone());
+    tctx.set("palette_swatches", palette_swatches(settings, &accent));
+    for (index, hex) in palette_wheel_hexes(settings).into_iter().enumerate() {
+        tctx.set(format!("palette_swatch_{index}_value"), hex.clone());
+        tctx.set(
+            format!("palette_swatch_{index}_action"),
+            format!("pick_palette_swatch__{index}"),
+        );
+        tctx.set(
+            format!("palette_swatch_{index}_selected"),
+            hex == accent,
+        );
+    }
+    tctx.set(
+        "wallpaper_brightness",
+        format!("{:.2}", settings.wallpaper_brightness),
+    );
+
+    tctx.set(
+        "preset_original_active",
+        matches!(
+            settings.color_mode,
+            ColorMode::Preset(ColorPreset::Original)
+        ),
+    );
+    tctx.set(
+        "preset_plasma_active",
+        matches!(settings.color_mode, ColorMode::Preset(ColorPreset::Plasma)),
+    );
+    tctx.set(
+        "preset_poolside_active",
+        matches!(
+            settings.color_mode,
+            ColorMode::Preset(ColorPreset::Poolside)
+        ),
+    );
+    tctx.set(
+        "preset_freedom_active",
+        matches!(settings.color_mode, ColorMode::Preset(ColorPreset::Freedom)),
+    );
+
+    tctx.set("mode_label", format!("{:?}", settings.mode));
+    tctx.set(
+        "pressure_mode_label",
+        pressure_mode_label(settings.pressure_mode),
+    );
+    tctx.set(
+        "pressure_clear_value",
+        format!("{:.2}", pressure_clear_value(settings.pressure_mode)),
+    );
+    tctx.set("seed_label", settings.seed.as_deref().unwrap_or("Auto"));
+
+    tctx.set("fluid_size", settings.fluid_size.to_string());
+    tctx.set(
+        "fluid_frame_rate",
+        format!("{:.1}", settings.fluid_frame_rate),
+    );
+    tctx.set("fluid_timestep", format!("{:.4}", settings.fluid_timestep));
+    tctx.set("viscosity", format!("{:.2}", settings.viscosity));
+    tctx.set(
+        "velocity_dissipation",
+        format!("{:.3}", settings.velocity_dissipation),
+    );
+    tctx.set(
+        "diffusion_iterations",
+        settings.diffusion_iterations.to_string(),
+    );
+    tctx.set(
+        "pressure_iterations",
+        settings.pressure_iterations.to_string(),
+    );
+    tctx.set("line_length", format!("{:.0}", settings.line_length));
+    tctx.set("line_width", format!("{:.1}", settings.line_width));
+    tctx.set(
+        "line_begin_offset",
+        format!("{:.2}", settings.line_begin_offset),
+    );
+    tctx.set("line_variance", format!("{:.2}", settings.line_variance));
+    tctx.set("grid_spacing", settings.grid_spacing.to_string());
+    tctx.set("view_scale", format!("{:.2}", settings.view_scale));
+    tctx.set(
+        "noise_multiplier",
+        format!("{:.2}", settings.noise_multiplier),
+    );
+
+    for (index, channel) in settings.noise_channels.iter().enumerate() {
+        tctx.set(
+            format!("noise_channel_{index}_scale"),
+            format!("{:.3}", channel.scale),
+        );
+        tctx.set(
+            format!("noise_channel_{index}_multiplier"),
+            format!("{:.3}", channel.multiplier),
+        );
+        tctx.set(
+            format!("noise_channel_{index}_offset_increment"),
+            format!("{:.4}", channel.offset_increment),
+        );
+    }
+
+    tctx
+}
+
+fn palette_hexes(settings: &Settings) -> [String; 3] {
+    match settings.color_mode {
+        ColorMode::Preset(ColorPreset::Original) => [
+            "#0a1430".to_string(),
+            "#1e5db5".to_string(),
+            "#d7eef9".to_string(),
+        ],
+        ColorMode::Preset(ColorPreset::Plasma) => palette_hexes_from_scheme(&COLOR_SCHEME_PLASMA),
+        ColorMode::Preset(ColorPreset::Poolside) => {
+            palette_hexes_from_scheme(&COLOR_SCHEME_POOLSIDE)
+        }
+        ColorMode::Preset(ColorPreset::Freedom) => [
+            "#0057b7".to_string(),
+            "#2b79d0".to_string(),
+            "#ffd900".to_string(),
+        ],
+        ColorMode::ImageFile(_) | ColorMode::NowPlaying(_) => [
+            "#0a1430".to_string(),
+            "#1e5db5".to_string(),
+            "#d7eef9".to_string(),
+        ],
+    }
+}
+
+fn palette_hexes_from_scheme(scheme: &[f32; 24]) -> [String; 3] {
+    [
+        rgb_triplet_to_hex([scheme[0], scheme[1], scheme[2]]),
+        rgb_triplet_to_hex([scheme[8], scheme[9], scheme[10]]),
+        rgb_triplet_to_hex([scheme[16], scheme[17], scheme[18]]),
+    ]
+}
+
+fn accent_hex(
+    settings: &Settings,
+    user_hex: Option<&str>,
+    now_playing_hex: Option<&str>,
+) -> String {
+    user_hex
+        .or(now_playing_hex)
+        .map(|hex| hex.to_string())
+        .unwrap_or_else(|| palette_hexes(settings)[1].clone())
+}
+
+fn palette_swatches(settings: &Settings, accent_hex: &str) -> Vec<TemplateContext> {
+    palette_wheel_hexes(settings)
+        .into_iter()
+        .enumerate()
+        .map(|(index, hex)| {
+            let mut ctx = TemplateContext::new();
+            ctx.set("value", hex.clone());
+            ctx.set("action", format!("pick_palette_swatch__{index}"));
+            ctx.set("selected", hex == accent_hex);
+            ctx
+        })
+        .collect()
+}
+
+fn palette_wheel_hexes(settings: &Settings) -> [String; 6] {
+    match &settings.color_mode {
+        ColorMode::Preset(ColorPreset::Plasma) => {
+            palette_wheel_hexes_from_scheme(&COLOR_SCHEME_PLASMA)
+        }
+        ColorMode::Preset(ColorPreset::Poolside) => {
+            palette_wheel_hexes_from_scheme(&COLOR_SCHEME_POOLSIDE)
+        }
+        ColorMode::Preset(preset) => palette_wheel_hexes_from_stops(palette_stops(*preset)),
+        ColorMode::ImageFile(_) | ColorMode::NowPlaying(_) => {
+            palette_wheel_hexes_from_stops(palette_stops(ColorPreset::Original))
+        }
+    }
+}
+
+fn palette_wheel_hexes_from_stops(stops: [[f32; 3]; 3]) -> [String; 6] {
+    std::array::from_fn(|index| {
+        let t = index as f32 / 5.0;
+        rgb_triplet_to_hex(sample_three_stop_palette(stops, t))
+    })
+}
+
+fn palette_wheel_hexes_from_scheme(scheme: &[f32; 24]) -> [String; 6] {
+    std::array::from_fn(|index| {
+        let offset = index * 4;
+        rgb_triplet_to_hex([scheme[offset], scheme[offset + 1], scheme[offset + 2]])
+    })
+}
+
+fn sample_three_stop_palette(stops: [[f32; 3]; 3], t: f32) -> [f32; 3] {
+    let t = t.clamp(0.0, 1.0);
+    if t <= 0.5 {
+        lerp3(stops[0], stops[1], t * 2.0)
+    } else {
+        lerp3(stops[1], stops[2], (t - 0.5) * 2.0)
+    }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+fn palette_stops(preset: ColorPreset) -> [[f32; 3]; 3] {
+    match preset {
+        ColorPreset::Original => [[0.02, 0.08, 0.19], [0.15, 0.43, 0.80], [0.84, 0.94, 0.98]],
+        ColorPreset::Plasma => [[0.24, 0.15, 0.26], [0.67, 0.21, 0.20], [0.53, 0.60, 0.72]],
+        ColorPreset::Poolside => [[0.30, 0.61, 0.89], [0.55, 0.80, 0.96], [0.61, 0.82, 0.92]],
+        ColorPreset::Freedom => [[0.0, 0.34, 0.72], [0.0, 0.53, 0.91], [1.0, 0.84, 0.0]],
+    }
+}
+
+fn rgb_triplet_to_hex(rgb: [f32; 3]) -> String {
+    let r = (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g = (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b = (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_template_parses() {
+        let source = std::fs::read_to_string(settings_template_path()).unwrap();
+        let component_file = parse_component_file(&source).unwrap();
+        assert!(component_file.components.contains_key("SettingsRoot"));
     }
 }
 
@@ -474,7 +957,7 @@ fn build_settings_template(cfg: &AppConfig) -> String {
 
     let mut out = String::new();
     out.push_str(
-        "+++\n+++\n\n--- SettingsRoot\ndiv w-full h-full flex flex-col min-h-0 bg-zinc-950 text-zinc-100 text-sm\n  div shrink-0 flex items-center justify-between px-4 py-3 border-b border-zinc-800\n    div text-lg font-semibold tracking-tight\n      \"Flux Wallpaper\"\n    div px-2 py-1 rounded-md text-zinc-400 cursor-pointer @mouseup=close_window\n      \"Close\"\n\n  div flex-1 min-h-0 overflow-y-scroll px-4 py-4 flex flex-col gap-4\n",
+        "+++\n+++\n\n--- SettingsRoot\ndiv w-full h-full flex flex-col min-h-0 bg-zinc-950 text-zinc-100 text-sm\n  div shrink-0 flex items-center justify-between px-4 py-3 border-b border-zinc-800\n    div text-lg font-semibold tracking-tight\n      \"Drift Wallpaper\"\n    div px-2 py-1 rounded-md text-zinc-400 cursor-pointer @mouseup=close_window\n      \"Close\"\n\n  div flex-1 min-h-0 overflow-y-auto px-4 py-4 flex flex-col gap-4\n",
     );
 
     out.push_str(&card(
@@ -521,17 +1004,33 @@ fn build_settings_template(cfg: &AppConfig) -> String {
     }
     out.push_str(&card("Monitors", &monitor_markup));
 
+    let wallpaper_layout_markup = format!(
+        "div flex items-center justify-between gap-4\n  div flex flex-col min-w-0 flex-1\n    div text-sm font-medium\n      \"Wallpaper span\"\n    div text-xs text-zinc-500\n      \"Render one continuous frame across all monitors instead of separate wallpaper windows.\"\n  div px-3 py-1 rounded-md {} text-xs cursor-pointer @mouseup=toggle_wallpaper_layout\n    \"{}\"\n",
+        if cfg.wallpaper_layout == WallpaperLayout::SpanDisplays {
+            "bg-zinc-700 text-zinc-100"
+        } else {
+            "bg-zinc-800 border border-zinc-700 text-zinc-200"
+        },
+        if cfg.wallpaper_layout == WallpaperLayout::SpanDisplays {
+            "One span"
+        } else {
+            "Per monitor"
+        }
+    );
+    out.push_str(&card("Display", &wallpaper_layout_markup));
+
     let color_source_label = match &settings.color_mode {
         ColorMode::Preset(ColorPreset::Original) => "Original preset".to_string(),
         ColorMode::Preset(ColorPreset::Plasma) => "Plasma preset".to_string(),
         ColorMode::Preset(ColorPreset::Poolside) => "Poolside preset".to_string(),
         ColorMode::Preset(ColorPreset::Freedom) => "Freedom preset".to_string(),
         ColorMode::ImageFile(path) => format!("Image: {}", path.display()),
+        ColorMode::NowPlaying(source) => format!("Now playing: {}", source.label()),
     };
     let mut color_markup = String::new();
     color_markup.push_str("div flex flex-col gap-3\n");
     color_markup.push_str("  div text-xs text-zinc-400\n");
-    color_markup.push_str(&format!("    {}\n", quoted(&color_source_label)));
+    color_markup.push_str(&format!("    {}\n", template_text(&color_source_label)));
     color_markup.push_str("  div flex flex-wrap gap-2\n");
     color_markup.push_str(&button(
         "Original",
@@ -560,6 +1059,30 @@ fn build_settings_template(cfg: &AppConfig) -> String {
         matches!(settings.color_mode, ColorMode::Preset(ColorPreset::Freedom)),
     ));
     color_markup.push_str(&button("Choose image…", Some("pick_image_file"), false));
+    color_markup.push_str(&button(
+        "Automatic music art",
+        Some("set_now_playing_automatic"),
+        matches!(
+            settings.color_mode,
+            ColorMode::NowPlaying(NowPlayingSource::Automatic)
+        ),
+    ));
+    color_markup.push_str(&button(
+        "Apple Music art",
+        Some("set_now_playing_apple_music"),
+        matches!(
+            settings.color_mode,
+            ColorMode::NowPlaying(NowPlayingSource::AppleMusic)
+        ),
+    ));
+    color_markup.push_str(&button(
+        "Spotify art",
+        Some("set_now_playing_spotify"),
+        matches!(
+            settings.color_mode,
+            ColorMode::NowPlaying(NowPlayingSource::Spotify)
+        ),
+    ));
     color_markup.push_str(&button(
         "Use wallpaper",
         Some("apply_wallpaper_image"),
@@ -661,7 +1184,7 @@ fn build_settings_template(cfg: &AppConfig) -> String {
 fn card(title: &str, inner: &str) -> String {
     format!(
         "    div rounded-lg border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3\n      div text-xs font-semibold uppercase tracking-wider text-zinc-500\n        {}\n{}",
-        quoted(title),
+        template_text(title),
         indent(inner, 3)
     )
 }
@@ -669,8 +1192,8 @@ fn card(title: &str, inner: &str) -> String {
 fn action_row(label: &str, value: &str, action: &str) -> String {
     format!(
         "div flex items-center justify-between gap-4\n  div flex flex-col min-w-0 flex-1\n    div text-sm font-medium\n      {}\n    div text-xs text-zinc-500\n      {}\n  div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup={}\n    \"Apply\"\n",
-        quoted(label),
-        quoted(value),
+        template_text(label),
+        template_text(value),
         action
     )
 }
@@ -678,10 +1201,10 @@ fn action_row(label: &str, value: &str, action: &str) -> String {
 fn adjust_row(label: &str, value: &str, down_action: &str, up_action: &str) -> String {
     format!(
         "div flex items-center justify-between gap-4\n  div flex flex-col min-w-0 flex-1\n    div text-sm font-medium\n      {}\n    div text-xs text-zinc-500\n      {}\n  div flex items-center gap-2 shrink-0\n    div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup={}\n      \"-\"\n    div min-w-20 text-right text-xs text-zinc-300\n      {}\n    div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup={}\n      \"+\"\n",
-        quoted(label),
-        quoted(value),
+        template_text(label),
+        template_text(value),
         down_action,
-        quoted(value),
+        template_text(value),
         up_action
     )
 }
@@ -705,7 +1228,7 @@ fn noise_channel_row(settings: &Settings, index: usize) -> String {
     markup.push_str("  div text-xs font-semibold uppercase tracking-wide text-zinc-500\n");
     markup.push_str(&format!(
         "    {}\n",
-        quoted(&format!("Channel {}", index + 1))
+        template_text(&format!("Channel {}", index + 1))
     ));
     markup.push_str(&indent(
         &adjust_row(
@@ -746,9 +1269,9 @@ fn button(label: &str, action: Option<&str>, active: bool) -> String {
     match action {
         Some(action) => format!(
             "    div {style} @mouseup={action}\n      {}\n",
-            quoted(label)
+            template_text(label)
         ),
-        None => format!("    div {style}\n      {}\n", quoted(label)),
+        None => format!("    div {style}\n      {}\n", template_text(label)),
     }
 }
 
@@ -768,8 +1291,36 @@ fn indent(input: &str, level: usize) -> String {
         + "\n"
 }
 
-fn quoted(input: &str) -> String {
-    format!("\"{}\"", input.replace('\\', "\\\\").replace('"', "\\\""))
+fn template_text(input: &str) -> String {
+    let mut out = String::from("\"");
+    let mut literal = String::new();
+
+    let flush_literal = |out: &mut String, literal: &mut String| {
+        if literal.is_empty() {
+            return;
+        }
+        out.push_str(&literal.replace('\\', "\\\\").replace('"', "\\\""));
+        literal.clear();
+    };
+
+    for ch in input.chars() {
+        match ch {
+            '{' => {
+                flush_literal(&mut out, &mut literal);
+                out.push_str("{open_brace}");
+            }
+            '}' => {
+                flush_literal(&mut out, &mut literal);
+                out.push_str("{close_brace}");
+            }
+            '\r' | '\n' => literal.push(' '),
+            _ => literal.push(ch),
+        }
+    }
+
+    flush_literal(&mut out, &mut literal);
+    out.push('"');
+    out
 }
 
 fn pressure_mode_label(mode: PressureMode) -> String {

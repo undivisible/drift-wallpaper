@@ -1,5 +1,8 @@
 [workspace]
-members = ["crates/drift-core", "crates/drift-app"]
+members = [
+    "crates/drift-core",
+    "crates/drift-app",
+]
 resolver = "2"
 
 [workspace.package]
@@ -18,10 +21,11 @@ serde_json = "1"
 bytemuck = { version = "1.4", features = ["derive"] }
 glam = "0.32"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-wgpu = { version = "28.0", features = ["wgsl"] }
+wgpu = { version = "29.0", features = ["wgsl"] }
 winit = { version = "0.30", features = ["rwh_06"] }
 pollster = "0.4"
 gpui = { version = "0.2.2", default-features = false, features = ["font-kit"] }
+crepuscularity-runtime = "0.3.0"
 unicode-segmentation = "1"
 approx = "0.5.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
@@ -34,5 +38,3 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
 
-[patch.crates-io]
-gpui = { path = "crepuscularity/vendor/gpui" }

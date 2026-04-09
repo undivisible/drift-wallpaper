@@ -71,7 +71,7 @@ impl Flux {
         physical_height: u32,
         settings: &Arc<Settings>,
     ) -> Result<Flux, String> {
-        log::info!("✨ Initialising Flux");
+        log::info!("✨ Initialising Drift");
 
         rng::init_from_seed(&settings.seed);
 
@@ -221,7 +221,7 @@ impl Flux {
                 .update_buffers(queue, self.settings.fluid_timestep);
 
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("flux::compute"),
+                label: Some("drift::compute"),
                 timestamp_writes: None,
             });
 
@@ -251,7 +251,7 @@ impl Flux {
                 .tick_line_uniforms(device, queue, timestep, self.elapsed_time);
 
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("flux::place_lines"),
+                label: Some("drift::place_lines"),
                 timestamp_writes: None,
             });
 
@@ -272,7 +272,7 @@ impl Flux {
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("flux::render"),
+                label: Some("drift::render"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,

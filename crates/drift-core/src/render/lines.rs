@@ -26,9 +26,10 @@ struct LineUniforms {
     // 3 => Sample colors from a texture with SRGB (unsupported)
     color_mode: u32, // 44
 
-    delta_time: f32, // 48
-    _padding: u32,   // 52
-                     // roundUp(52, 8) = 56
+    delta_time: f32,        // 48
+    output_brightness: f32, // 52
+    /// Uniform block size must be a multiple of 16 bytes for WebGPU.
+    _wgpu_pad: [f32; 2],
 }
 
 impl LineUniforms {
@@ -50,7 +51,8 @@ impl LineUniforms {
             line_noise_blend_factor: 0.0,
             color_mode: settings.color_mode.clone().into(),
             delta_time: 1.0 / 60.0, // Initial value, will be updated every frame
-            _padding: 0,
+            output_brightness: settings.wallpaper_brightness.clamp(0.05, 2.0),
+            _wgpu_pad: [0.0, 0.0],
         }
     }
 
@@ -683,10 +685,10 @@ impl Context {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:place_lines"),
                 bind_group_layouts: &[
-                    &uniform_bind_group_layout,
-                    &lines_bind_group_layout,
-                    &color_bind_group_layout,
-                    &velocity_bind_group_layout,
+                    Some(&uniform_bind_group_layout),
+                    Some(&lines_bind_group_layout),
+                    Some(&color_bind_group_layout),
+                    Some(&velocity_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -711,7 +713,10 @@ impl Context {
         let draw_line_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:draw_line"),
-                bind_group_layouts: &[&uniform_bind_group_layout, &view_uniform_bind_group_layout],
+                bind_group_layouts: &[
+                    Some(&uniform_bind_group_layout),
+                    Some(&view_uniform_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -781,7 +786,10 @@ impl Context {
         let draw_endpoint_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:draw_endpoint"),
-                bind_group_layouts: &[&uniform_bind_group_layout, &view_uniform_bind_group_layout],
+                bind_group_layouts: &[
+                    Some(&uniform_bind_group_layout),
+                    Some(&view_uniform_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 

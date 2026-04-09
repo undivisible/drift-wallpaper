@@ -23,17 +23,21 @@ pollster.workspace = true
 image.workspace = true
 gpui.workspace = true
 unicode-segmentation.workspace = true
-crepuscularity-runtime = { path = "../../crepuscularity/crates/crepuscularity-runtime" }
+crepuscularity-runtime.workspace = true
 
 # macOS-only dependencies: Objective-C runtime + AppKit
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
+    "objc2-core-foundation",
     "NSString",
     "NSURL",
     "NSDictionary",
     "NSArray",
     "NSError",
+    "NSDate",
+    "NSRunLoop",
+    "NSDistributedNotificationCenter",
     "NSProcessInfo",
     "NSFileManager",
     "NSUserDefaults",
@@ -50,6 +54,11 @@ objc2-app-kit = { version = "0.3", features = [
     "NSMenuItem",
     "NSButton",
     "NSView",
+    "NSPanel",
+    "NSResponder",
     "NSOpenPanel",
     "NSAlert",
+    "NSColorPanel",
+    "NSColor",
+    "NSColorSpace",
 ] }

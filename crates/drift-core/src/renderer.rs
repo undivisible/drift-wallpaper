@@ -30,7 +30,7 @@ impl FluxRenderer {
         settings: Settings,
     ) -> Result<Self> {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference: wgpu::PowerPreference::LowPower,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
         }))
@@ -122,14 +122,15 @@ impl FluxRenderer {
 
     pub fn render(&mut self) -> bool {
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.surface_config);
                 return false;
             }
-            Err(wgpu::SurfaceError::OutOfMemory) => return false,
-            Err(wgpu::SurfaceError::Timeout) => return true,
-            Err(wgpu::SurfaceError::Other) => return true,
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => return true,
         };
 
         let view = frame
@@ -190,12 +191,62 @@ fn apply_color_mode(
     match &settings.color_mode {
         ColorMode::ImageFile(path) => {
             let encoded = std::fs::read(path)
-                .with_context(|| format!("Read Flux color image {}", path.display()))?;
-            let image = render::color::Context::decode_color_texture(&encoded)
-                .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-            flux.sample_colors_from_image(device, queue, &image);
-            Ok(Some(path.clone()))
+                .with_context(|| format!("Read Drift color image {}", path.display()))?;
+            match render::color::Context::decode_color_texture(&encoded) {
+                Ok(image) => {
+                    flux.sample_colors_from_image(device, queue, &image);
+                    Ok(Some(path.clone()))
+                }
+                Err(err) => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        log::warn!(
+                            "Failed to decode color image {}; trying macOS conversion fallback: {}",
+                            path.display(),
+                            err
+                        );
+
+                        let converted_path = convert_macos_wallpaper_to_png(path)?;
+                        let encoded = std::fs::read(&converted_path).with_context(|| {
+                            format!("Read converted Drift image {}", converted_path.display())
+                        })?;
+                        let image = render::color::Context::decode_color_texture(&encoded)
+                            .map_err(|fallback_err| {
+                                anyhow::anyhow!(
+                                    "Failed to decode converted image {} after image decode failed: {}; fallback error: {}",
+                                    converted_path.display(),
+                                    err,
+                                    fallback_err
+                                )
+                            })?;
+                        flux.sample_colors_from_image(device, queue, &image);
+                        Ok(Some(converted_path))
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        Err(anyhow::anyhow!(err.to_string()))
+                    }
+                }
+            }
         }
         _ => Ok(None),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn convert_macos_wallpaper_to_png(source: &Path) -> Result<std::path::PathBuf> {
+    let path = std::env::temp_dir().join("drift-wallpaper-converted.png");
+    let status = std::process::Command::new("sips")
+        .arg("-s")
+        .arg("format")
+        .arg("png")
+        .arg(source)
+        .arg("--out")
+        .arg(&path)
+        .status()
+        .context("Failed to run sips conversion")?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("sips exited with status {status}"));
+    }
+    Ok(path)
 }

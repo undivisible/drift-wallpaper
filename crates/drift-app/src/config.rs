@@ -11,6 +11,14 @@ pub const SUPPRESS_MENU_BAR_TRAY_ENV: &str = "DRIFT_SUPPRESS_MENU_BAR_TRAY";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum WallpaperLayout {
+    #[default]
+    PerMonitor,
+    SpanDisplays,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum MonitorMode {
     #[default]
     Linked,
@@ -22,7 +30,8 @@ pub enum MonitorMode {
 pub struct MonitorConfig {
     pub monitor_id: String,
     pub name_hint: String,
-    pub flux_settings: Settings,
+    #[serde(alias = "fluxSettings")]
+    pub drift_settings: Settings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,11 +41,16 @@ pub struct DiscoveredMonitor {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
     pub enabled: bool,
     pub launch_at_login: bool,
     pub monitor_mode: MonitorMode,
+    pub wallpaper_layout: WallpaperLayout,
+    /// User-chosen UI accent (swatches / color panel). Not overwritten by now-playing updates.
+    pub ui_accent_override: Option<String>,
+    /// Last accent derived from now-playing artwork (settings UI when user override is unset).
+    pub now_playing_accent_hex: Option<String>,
     pub shared_profile: Settings,
     pub monitors: BTreeMap<String, MonitorConfig>,
     pub selected_monitor_id: Option<String>,
@@ -48,6 +62,9 @@ impl Default for AppConfig {
             enabled: true,
             launch_at_login: false,
             monitor_mode: MonitorMode::Linked,
+            wallpaper_layout: WallpaperLayout::PerMonitor,
+            ui_accent_override: None,
+            now_playing_accent_hex: None,
             shared_profile: Settings::default(),
             monitors: BTreeMap::new(),
             selected_monitor_id: None,
@@ -110,6 +127,26 @@ impl AppConfig {
             self.shared_profile = Settings::default();
         }
 
+        if self
+            .ui_accent_override
+            .as_deref()
+            .is_some_and(|hex| !is_valid_hex_color(hex))
+        {
+            self.ui_accent_override = None;
+        }
+
+        if self
+            .now_playing_accent_hex
+            .as_deref()
+            .is_some_and(|hex| !is_valid_hex_color(hex))
+        {
+            self.now_playing_accent_hex = None;
+        }
+
+        if self.monitors.is_empty() {
+            self.wallpaper_layout = WallpaperLayout::PerMonitor;
+        }
+
         if self.monitors.is_empty() {
             self.selected_monitor_id = None;
         } else if self
@@ -130,7 +167,7 @@ impl AppConfig {
                 .or_insert_with(|| MonitorConfig {
                     monitor_id: monitor.id.clone(),
                     name_hint: monitor.name_hint.clone(),
-                    flux_settings: self.shared_profile.clone(),
+                    drift_settings: self.shared_profile.clone(),
                 });
             if entry.name_hint != monitor.name_hint {
                 entry.name_hint = monitor.name_hint.clone();
@@ -167,8 +204,19 @@ impl AppConfig {
         } else {
             self.selected_monitor_id()
                 .and_then(|id| self.monitors.get(id))
-                .map(|monitor| &monitor.flux_settings)
+                .map(|monitor| &monitor.drift_settings)
                 .unwrap_or(&self.shared_profile)
+        }
+    }
+
+    pub fn wallpaper_profile(&self) -> &Settings {
+        match self.monitor_mode {
+            MonitorMode::Linked => &self.shared_profile,
+            MonitorMode::Independent => self
+                .selected_monitor_id()
+                .and_then(|id| self.monitors.get(id))
+                .map(|monitor| &monitor.drift_settings)
+                .unwrap_or(&self.shared_profile),
         }
     }
 
@@ -187,7 +235,7 @@ impl AppConfig {
                         MonitorConfig {
                             monitor_id: monitor_id.clone(),
                             name_hint: "Display 1".to_string(),
-                            flux_settings: self.shared_profile.clone(),
+                            drift_settings: self.shared_profile.clone(),
                         },
                     );
                     self.selected_monitor_id = Some(monitor_id.clone());
@@ -200,9 +248,9 @@ impl AppConfig {
                 .or_insert_with(|| MonitorConfig {
                     monitor_id: id.clone(),
                     name_hint: id.clone(),
-                    flux_settings: self.shared_profile.clone(),
+                    drift_settings: self.shared_profile.clone(),
                 })
-                .flux_settings
+                .drift_settings
         }
     }
 
@@ -212,7 +260,7 @@ impl AppConfig {
             MonitorMode::Independent => self
                 .monitors
                 .get(monitor_id)
-                .map(|monitor| monitor.flux_settings.clone())
+                .map(|monitor| monitor.drift_settings.clone())
                 .unwrap_or_else(|| self.shared_profile.clone()),
         }
     }
@@ -224,17 +272,33 @@ impl AppConfig {
         }
     }
 
+    pub fn set_wallpaper_layout(&mut self, layout: WallpaperLayout) {
+        self.wallpaper_layout = layout;
+    }
+
     pub fn apply_preset_to_active(&mut self, preset: ColorPreset) {
         self.active_profile_mut().color_mode = ColorMode::Preset(preset);
+    }
+
+    pub fn apply_color_mode_to_all(&mut self, color_mode: ColorMode) {
+        self.shared_profile.color_mode = color_mode.clone();
+        for monitor in self.monitors.values_mut() {
+            monitor.drift_settings.color_mode = color_mode.clone();
+        }
     }
 
     pub fn sync_linked_monitors(&mut self) {
         if self.monitor_mode == MonitorMode::Linked {
             for monitor in self.monitors.values_mut() {
-                monitor.flux_settings = self.shared_profile.clone();
+                monitor.drift_settings = self.shared_profile.clone();
             }
         }
     }
+}
+
+fn is_valid_hex_color(value: &str) -> bool {
+    let hex = value.trim().trim_start_matches('#');
+    hex.len() == 6 && u32::from_str_radix(hex, 16).is_ok()
 }
 
 #[cfg(test)]
@@ -270,7 +334,7 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let decoded: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.monitor_mode, MonitorMode::Independent);
-        assert_eq!(decoded.monitors["two"].flux_settings.line_width, 12.0);
+        assert_eq!(decoded.monitors["two"].drift_settings.line_width, 12.0);
     }
 
     #[test]
@@ -286,15 +350,45 @@ mod tests {
     }
 
     #[test]
-    fn missing_config_defaults_to_flux() {
+    fn missing_config_defaults_to_drift() {
         let config = AppConfig::default();
         assert_eq!(config.shared_profile, Settings::default());
     }
 
     #[test]
-    fn legacy_shape_is_ignored() {
+    fn color_mode_updates_apply_to_all_monitors() {
+        let mut config = AppConfig {
+            monitor_mode: MonitorMode::Independent,
+            ..AppConfig::default()
+        };
+        config.ensure_monitors(&[monitor("one", "Display 1"), monitor("two", "Display 2")]);
+
+        config.apply_color_mode_to_all(ColorMode::Preset(ColorPreset::Plasma));
+
+        assert_eq!(
+            config.shared_profile.color_mode,
+            ColorMode::Preset(ColorPreset::Plasma)
+        );
+        assert_eq!(
+            config.monitors["one"].drift_settings.color_mode,
+            ColorMode::Preset(ColorPreset::Plasma)
+        );
+        assert_eq!(
+            config.monitors["two"].drift_settings.color_mode,
+            ColorMode::Preset(ColorPreset::Plasma)
+        );
+    }
+
+    #[test]
+    fn wallpaper_layout_defaults_to_per_monitor() {
+        let config = AppConfig::default();
+        assert_eq!(config.wallpaper_layout, WallpaperLayout::PerMonitor);
+    }
+
+    #[test]
+    fn legacy_shape_falls_back_to_defaults() {
         let legacy = r#"{"enabled":true,"params":{"speed":1.0}}"#;
-        let decoded = serde_json::from_str::<AppConfig>(legacy);
-        assert!(decoded.is_err());
+        let decoded = serde_json::from_str::<AppConfig>(legacy).unwrap();
+        assert_eq!(decoded, AppConfig::default());
     }
 }

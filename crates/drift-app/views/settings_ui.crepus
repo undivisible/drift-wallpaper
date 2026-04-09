@@ -1,8 +1,7 @@
-+++
+++
 [Card.defaults]
 title = ""
-
-+++
+++
 
 --- Card
 div rounded-lg border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3
@@ -11,80 +10,562 @@ div rounded-lg border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3
   slot
 
 --- SettingsRoot
-div w-full h-full flex flex-col min-h-0 bg-zinc-950 text-zinc-100 text-sm
-  div shrink-0 flex items-center justify-between px-4 py-3 border-b border-zinc-800
-    div text-lg font-semibold tracking-tight
-      "Drift Wallpaper"
-    div px-2 py-1 rounded-md text-zinc-400 cursor-pointer @mouseup=close_window
+div w-full h-full min-h-0 flex flex-col bg-zinc-950 text-zinc-100 text-sm
+  div shrink-0 flex items-center justify-between gap-4 px-4 py-3 border-b border-zinc-800 bg-zinc-950/95
+    div window-control-area="drag" cursor-move flex flex-col gap-1 min-w-0 flex-1
+      div text-lg font-semibold tracking-tight
+        "Drift"
+      div h-1 w-16 rounded-full bg-{accent}
+    div px-2 py-1 rounded-md text-zinc-400 cursor-pointer hover:text-zinc-200 @mouseup=close_window
       "Close"
 
-  div flex-1 min-h-0 overflow-y-scroll px-4 py-4 flex flex-col gap-4
+  div flex-1 min-h-0 min-w-0 overflow-y-scroll px-4 py-4 flex flex-col gap-4 max-w-[36rem] self-center w-full
 
     include settings_ui.crepus#Card title="Session"
       div flex flex-col gap-3
         div flex items-center justify-between gap-4
-          div text-sm font-medium min-w-0 flex-1
-            "Live wallpaper"
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Wallpaper enabled"
+            div text-xs text-zinc-500
+              "Turn the live wallpaper on or off."
           if {enabled}
-            div px-3 py-1 rounded-md bg-blue-600 text-white text-xs cursor-pointer @mouseup=toggle_wallpaper_enabled
+            div px-3 py-1 rounded-md bg-{accent} text-white text-xs cursor-pointer @mouseup=toggle_wallpaper_enabled
               "On"
           else
             div px-3 py-1 rounded-md bg-zinc-700 text-zinc-300 text-xs cursor-pointer @mouseup=toggle_wallpaper_enabled
               "Off"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Monitor mode"
+            div text-xs text-zinc-500
+              if {monitor_mode_linked}
+                "Shared profile across every display."
+              else
+                "Independent profile for the selected display."
+          if {monitor_mode_linked}
+            div px-3 py-1 rounded-md bg-{accent} text-white text-xs cursor-pointer @mouseup=toggle_link_mode
+              "Linked"
+          else
+            div px-3 py-1 rounded-md bg-zinc-700 text-zinc-300 text-xs cursor-pointer @mouseup=toggle_link_mode
+              "Independent"
+
         if {macos}
           div flex items-center justify-between gap-4
-            div text-sm font-medium min-w-0 flex-1
-              "Open at login"
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Open at login"
+              div text-xs text-zinc-500
+                "Launch Drift automatically when you sign in."
             if {launch_at_login}
-              div px-3 py-1 rounded-md bg-blue-600 text-white text-xs cursor-pointer @mouseup=toggle_launch_at_login
+              div px-3 py-1 rounded-md bg-{accent} text-white text-xs cursor-pointer @mouseup=toggle_launch_at_login
                 "On"
             else
               div px-3 py-1 rounded-md bg-zinc-700 text-zinc-300 text-xs cursor-pointer @mouseup=toggle_launch_at_login
                 "Off"
 
+        div text-xs text-zinc-500
+          {selected_monitor_name}
+
+    include settings_ui.crepus#Card title="Display"
+      div flex flex-col gap-3
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Brightness"
+            div text-xs text-zinc-500
+              "Dims or brightens the live wallpaper (1.00 = original)."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__wallpaper_brightness__down
+              "-"
+            div min-w-16 text-right text-xs text-zinc-300
+              {wallpaper_brightness}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__wallpaper_brightness__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Wallpaper span"
+            div text-xs text-zinc-500
+              "Render one continuous frame across all monitors instead of separate wallpaper windows."
+          if {wallpaper_layout_spanned}
+            div px-3 py-1 rounded-md bg-{accent} text-white text-xs cursor-pointer @mouseup=toggle_wallpaper_layout
+              "One span"
+          else
+            div px-3 py-1 rounded-md bg-zinc-700 text-zinc-300 text-xs cursor-pointer @mouseup=toggle_wallpaper_layout
+              "Per monitor"
+
     include settings_ui.crepus#Card title="Palette"
-      div flex items-center gap-3 flex-wrap
-        div text-xs font-semibold uppercase tracking-wide text-zinc-400
-          "Gradient stops"
-        div w-10 h-10 rounded-md border border-zinc-600 cursor-pointer bg-{color_a_hex} @mouseup=swatch_0
-        div w-10 h-10 rounded-md border border-zinc-600 cursor-pointer bg-{color_b_hex} @mouseup=swatch_1
-        div w-10 h-10 rounded-md border border-zinc-600 cursor-pointer bg-{color_c_hex} @mouseup=swatch_2
+      div flex flex-col gap-3
+        div text-xs text-zinc-500
+          {color_source_label}
+        if {color_source_is_image}
+          div text-xs text-zinc-500
+            {color_source_detail}
+        div flex flex-row flex-nowrap gap-2 overflow-x-auto
+          if {palette_swatch_0_selected}
+            div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_0_value} cursor-pointer @mouseup={palette_swatch_0_action}
+          else
+            div w-10 h-10 shrink-0 rounded-md border border-zinc-600 bg-{palette_swatch_0_value} cursor-pointer @mouseup={palette_swatch_0_action}
+          if {palette_swatch_1_selected}
+            div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_1_value} cursor-pointer @mouseup={palette_swatch_1_action}
+          else
+            div w-10 h-10 shrink-0 rounded-md border border-zinc-600 bg-{palette_swatch_1_value} cursor-pointer @mouseup={palette_swatch_1_action}
+          if {palette_swatch_2_selected}
+            div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_2_value} cursor-pointer @mouseup={palette_swatch_2_action}
+          else
+            div w-10 h-10 shrink-0 rounded-md border border-zinc-600 bg-{palette_swatch_2_value} cursor-pointer @mouseup={palette_swatch_2_action}
+          if {palette_swatch_3_selected}
+            div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_3_value} cursor-pointer @mouseup={palette_swatch_3_action}
+          else
+            div w-10 h-10 shrink-0 rounded-md border border-zinc-600 bg-{palette_swatch_3_value} cursor-pointer @mouseup={palette_swatch_3_action}
+          if {palette_swatch_4_selected}
+            div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_4_value} cursor-pointer @mouseup={palette_swatch_4_action}
+          else
+            div w-10 h-10 shrink-0 rounded-md border border-zinc-600 bg-{palette_swatch_4_value} cursor-pointer @mouseup={palette_swatch_4_action}
+          if {palette_swatch_5_selected}
+            div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_5_value} cursor-pointer @mouseup={palette_swatch_5_action}
+          else
+            div w-10 h-10 shrink-0 rounded-md border border-zinc-600 bg-{palette_swatch_5_value} cursor-pointer @mouseup={palette_swatch_5_action}
 
     include settings_ui.crepus#Card title="Presets"
       div flex flex-wrap gap-2
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_original
-          "Original"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_plasma
-          "Plasma"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_poolside
-          "Poolside"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_freedom
-          "Freedom"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_ocean
-          "Ocean"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_sunset
-          "Sunset"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_forest
-          "Forest"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_lava
-          "Lava"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_midnight
-          "Midnight"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_monochrome
-          "Mono"
+        if {preset_original_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_preset_original
+            "Original"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_preset_original
+            "Original"
+        if {preset_plasma_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_preset_plasma
+            "Plasma"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_preset_plasma
+            "Plasma"
+        if {preset_poolside_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_preset_poolside
+            "Poolside"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_preset_poolside
+            "Poolside"
+        if {preset_freedom_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_preset_freedom
+            "Freedom"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_preset_freedom
+            "Freedom"
 
     include settings_ui.crepus#Card title="Match a reference"
       div flex flex-wrap gap-2
-        div px-3 py-2 rounded-md bg-blue-600 text-xs font-semibold text-white cursor-pointer @mouseup=pick_image_file
-          "Choose image…"
+        div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=pick_image_file
+          "Choose image..."
+        if {now_playing_automatic_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_now_playing_automatic
+            "Automatic music art"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_now_playing_automatic
+            "Automatic music art"
+        if {now_playing_apple_music_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_now_playing_apple_music
+            "Apple Music art"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_now_playing_apple_music
+            "Apple Music art"
+        if {now_playing_spotify_active}
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=set_now_playing_spotify
+            "Spotify art"
+        else
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=set_now_playing_spotify
+            "Spotify art"
         div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=apply_wallpaper_image
-          "From desktop wallpaper"
+          "Use desktop wallpaper"
         div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=apply_wallpaper_screenshot
-          "From screen capture"
+          "Use screen capture"
 
     include settings_ui.crepus#Card title="Engine"
-      div flex flex-wrap gap-2
-        div px-3 py-2 rounded-md bg-blue-600 text-xs font-semibold text-white cursor-pointer @mouseup=open_background
-          "Start live wallpaper"
-        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=open_preview
-          "Open preview"
+      div flex flex-col gap-3
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Render mode"
+            div text-xs text-zinc-500
+              "Normal and debug views."
+          div px-3 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=cycle_mode
+            {mode_label}
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Pressure mode"
+            div text-xs text-zinc-500
+              "Switch between retaining and clearing pressure."
+          div px-3 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=toggle_pressure_mode
+            {pressure_mode_label}
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Clear pressure"
+            div text-xs text-zinc-500
+              "Fine tune the clear-with pressure value."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=pressure_clear_down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {pressure_clear_value}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=pressure_clear_up
+              "+"
+
+        div flex flex-wrap gap-2
+          div px-3 py-2 rounded-md bg-{accent} text-xs font-semibold text-white cursor-pointer @mouseup=open_background
+            "Start live wallpaper"
+          div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=open_preview
+            "Open preview"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Seed"
+            div text-xs text-zinc-500
+              "Randomise for a new simulation seed or clear it to use runtime entropy."
+          div flex items-center gap-2 shrink-0
+            div px-3 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=seed_randomize
+              "Randomise"
+            div px-3 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=seed_clear
+              "Clear"
+        div text-xs text-zinc-500
+          {seed_label}
+
+    include settings_ui.crepus#Card title="Fluid"
+      div flex flex-col gap-3
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Fluid size"
+            div text-xs text-zinc-500
+              "Simulation grid resolution."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__fluid_size__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {fluid_size}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__fluid_size__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Fluid FPS"
+            div text-xs text-zinc-500
+              "How often the simulation steps."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__fluid_frame_rate__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {fluid_frame_rate}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__fluid_frame_rate__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Fluid timestep"
+            div text-xs text-zinc-500
+              "Physics step size."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__fluid_timestep__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {fluid_timestep}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__fluid_timestep__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Viscosity"
+            div text-xs text-zinc-500
+              "Higher values make the fluid thicker."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__viscosity__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {viscosity}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__viscosity__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Velocity dissipation"
+            div text-xs text-zinc-500
+              "How quickly motion decays."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__velocity_dissipation__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {velocity_dissipation}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__velocity_dissipation__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Diffusion iterations"
+            div text-xs text-zinc-500
+              "How many passes the diffusion solver makes."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__diffusion_iterations__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {diffusion_iterations}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__diffusion_iterations__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Pressure iterations"
+            div text-xs text-zinc-500
+              "How many solver passes the pressure solve uses."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__pressure_iterations__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {pressure_iterations}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__pressure_iterations__up
+              "+"
+
+    include settings_ui.crepus#Card title="Lines"
+      div flex flex-col gap-3
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Line length"
+            div text-xs text-zinc-500
+              "Length of each rendered line segment."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_length__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {line_length}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_length__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Line width"
+            div text-xs text-zinc-500
+              "Stroke thickness."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_width__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {line_width}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_width__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Line begin offset"
+            div text-xs text-zinc-500
+              "How far along the vector each line starts."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_begin_offset__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {line_begin_offset}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_begin_offset__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Line variance"
+            div text-xs text-zinc-500
+              "Variation in line placement."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_variance__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {line_variance}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__line_variance__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Grid spacing"
+            div text-xs text-zinc-500
+              "Distance between grid anchors."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__grid_spacing__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {grid_spacing}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__grid_spacing__up
+              "+"
+
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "View scale"
+            div text-xs text-zinc-500
+              "Overall scale applied to the line renderer."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__view_scale__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {view_scale}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__view_scale__up
+              "+"
+
+    include settings_ui.crepus#Card title="Noise"
+      div flex flex-col gap-3
+        div flex items-center justify-between gap-4
+          div flex flex-col min-w-0 flex-1
+            div text-sm font-medium
+              "Noise multiplier"
+            div text-xs text-zinc-500
+              "Multiplies the full noise contribution."
+          div flex items-center gap-2 shrink-0
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__noise_multiplier__down
+              "-"
+            div min-w-20 text-right text-xs text-zinc-300
+              {noise_multiplier}
+            div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=adjust__noise_multiplier__up
+              "+"
+
+        div rounded-md border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-3
+          div text-xs font-semibold uppercase tracking-wide text-zinc-500
+            "Channel 1"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Scale"
+              div text-xs text-zinc-500
+                "Frequency of the first noise channel."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__0__scale__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_0_scale}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__0__scale__up
+                "+"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Multiplier"
+              div text-xs text-zinc-500
+                "Contribution strength."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__0__multiplier__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_0_multiplier}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__0__multiplier__up
+                "+"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Offset increment"
+              div text-xs text-zinc-500
+                "How quickly the noise seed drifts."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__0__offset_increment__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_0_offset_increment}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__0__offset_increment__up
+                "+"
+
+        div rounded-md border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-3
+          div text-xs font-semibold uppercase tracking-wide text-zinc-500
+            "Channel 2"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Scale"
+              div text-xs text-zinc-500
+                "Frequency of the second noise channel."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__1__scale__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_1_scale}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__1__scale__up
+                "+"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Multiplier"
+              div text-xs text-zinc-500
+                "Contribution strength."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__1__multiplier__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_1_multiplier}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__1__multiplier__up
+                "+"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Offset increment"
+              div text-xs text-zinc-500
+                "How quickly the noise seed drifts."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__1__offset_increment__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_1_offset_increment}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__1__offset_increment__up
+                "+"
+
+        div rounded-md border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-3
+          div text-xs font-semibold uppercase tracking-wide text-zinc-500
+            "Channel 3"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Scale"
+              div text-xs text-zinc-500
+                "Frequency of the third noise channel."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__2__scale__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_2_scale}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__2__scale__up
+                "+"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Multiplier"
+              div text-xs text-zinc-500
+                "Contribution strength."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__2__multiplier__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_2_multiplier}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__2__multiplier__up
+                "+"
+          div flex items-center justify-between gap-4
+            div flex flex-col min-w-0 flex-1
+              div text-sm font-medium
+                "Offset increment"
+              div text-xs text-zinc-500
+                "How quickly the noise seed drifts."
+            div flex items-center gap-2 shrink-0
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__2__offset_increment__down
+                "-"
+              div min-w-20 text-right text-xs text-zinc-300
+                {noise_channel_2_offset_increment}
+              div w-8 h-8 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-200 cursor-pointer flex items-center justify-center @mouseup=noise__2__offset_increment__up
+                "+"

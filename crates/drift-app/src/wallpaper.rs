@@ -15,7 +15,7 @@ mod macos {
         NSApplication, NSBackingStoreType, NSScreen, NSWindow, NSWindowCollectionBehavior,
         NSWindowLevel, NSWindowStyleMask,
     };
-    use objc2_foundation::{CGPoint, CGRect, CGSize, MainThreadMarker};
+    use objc2_foundation::{MainThreadMarker, NSRect};
 
     /// `kCGDesktopWindowLevel` from `CGWindowLevel.h`: `INT32_MIN + 5 + 20`.
     const DESKTOP_WINDOW_LEVEL: i64 = i32::MIN as i64 + 5 + 20;
@@ -32,7 +32,7 @@ mod macos {
         /// Must be called from the main thread while an `NSApplication` is
         /// running.
         pub fn new(mtm: MainThreadMarker, screen: &NSScreen) -> Result<Self> {
-            let frame: CGRect = unsafe { screen.frame() };
+            let frame: NSRect = screen.frame();
 
             let style = NSWindowStyleMask::Borderless;
             let backing = NSBackingStoreType::Buffered;
@@ -86,7 +86,7 @@ mod macos {
         /// Resize the window frame to match the current screen bounds.
         /// Call this when `NSScreenParametersDidChangeNotification` fires.
         pub fn update_frame(&self, screen: &NSScreen) {
-            let frame: CGRect = unsafe { screen.frame() };
+            let frame: NSRect = screen.frame();
             unsafe {
                 self.window.setFrame_display(frame, false);
             }

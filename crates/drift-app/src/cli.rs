@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use drift_core::{ColorMode, ColorPreset};
 
 use crate::config::AppConfig;
@@ -59,7 +59,7 @@ pub fn apply_cli_args(config: &mut AppConfig) -> Result<StartupAction> {
         config.sync_linked_monitors();
         config.save()?;
         log::info!(
-            "Saved updated Flux configuration to {:?}",
+            "Saved updated Drift configuration to {:?}",
             AppConfig::config_path()
         );
     }
@@ -81,20 +81,27 @@ where
 }
 
 pub fn apply_named_preset(config: &mut AppConfig, value: &str) -> Result<()> {
-    let preset = match value.trim().to_ascii_lowercase().as_str() {
-        "original" | "flux-original" | "flux_original" => ColorPreset::Original,
-        "plasma" | "flux-plasma" | "flux_plasma" => ColorPreset::Plasma,
-        "poolside" | "flux-poolside" | "flux_poolside" => ColorPreset::Poolside,
-        "freedom" | "flux-freedom" | "flux_freedom" => ColorPreset::Freedom,
-        _ => bail!("Unknown Flux preset '{value}'"),
-    };
-    config.apply_preset_to_active(preset);
+    let preset =
+        match value.trim().to_ascii_lowercase().as_str() {
+            "original" | "drift-original" | "drift_original" | "flux-original"
+            | "flux_original" => ColorPreset::Original,
+            "plasma" | "drift-plasma" | "drift_plasma" | "flux-plasma" | "flux_plasma" => {
+                ColorPreset::Plasma
+            }
+            "poolside" | "drift-poolside" | "drift_poolside" | "flux-poolside"
+            | "flux_poolside" => ColorPreset::Poolside,
+            "freedom" | "drift-freedom" | "drift_freedom" | "flux-freedom" | "flux_freedom" => {
+                ColorPreset::Freedom
+            }
+            _ => bail!("Unknown Drift preset '{value}'"),
+        };
+    config.apply_color_mode_to_all(ColorMode::Preset(preset));
     Ok(())
 }
 
 pub fn apply_image_color_mode(config: &mut AppConfig, path: &Path) -> Result<()> {
     let normalized = normalize_image_path(path)?;
-    config.active_profile_mut().color_mode = ColorMode::ImageFile(normalized);
+    config.apply_color_mode_to_all(ColorMode::ImageFile(normalized));
     Ok(())
 }
 
@@ -120,6 +127,15 @@ pub fn apply_current_wallpaper_color_mode(config: &mut AppConfig) -> Result<()> 
         .path()
         .map(|s| s.to_string())
         .context("Desktop image URL did not resolve to a file path")?;
+
+    if image::ImageFormat::from_path(&path).is_err() {
+        log::info!(
+            "Current desktop wallpaper format is not directly supported; converting with sips"
+        );
+        let converted = convert_wallpaper_to_png(&path)?;
+        return apply_image_color_mode(config, &converted);
+    }
+
     apply_image_color_mode(config, Path::new(&path))
 }
 
@@ -140,15 +156,52 @@ pub fn apply_wallpaper_screenshot_color_mode(_config: &mut AppConfig) -> Result<
 }
 
 #[cfg(target_os = "macos")]
+use anyhow::anyhow;
+
+#[cfg(target_os = "macos")]
+fn convert_wallpaper_to_png(path: &str) -> Result<PathBuf> {
+    let output = std::env::temp_dir().join("drift-wallpaper-current-wallpaper.png");
+    let status = std::process::Command::new("sips")
+        .arg("-s")
+        .arg("format")
+        .arg("png")
+        .arg(path)
+        .arg("--out")
+        .arg(&output)
+        .status()
+        .context("Failed to run sips")?;
+
+    if !status.success() {
+        return Err(anyhow!("sips exited with status {status}"));
+    }
+
+    Ok(output)
+}
+
+#[cfg(target_os = "macos")]
 fn capture_main_screen_to_temp_file() -> Result<PathBuf> {
     let path = std::env::temp_dir().join("drift-wallpaper-screenshot.png");
-    let status = std::process::Command::new("screencapture")
+    let output = std::process::Command::new("screencapture")
         .arg("-x")
+        .arg("-m")
+        .arg("-t")
+        .arg("png")
         .arg(&path)
-        .status()
+        .output()
         .context("Failed to run screencapture")?;
-    if !status.success() {
-        return Err(anyhow!("screencapture exited with status {status}"));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let hint = if stderr.contains("could not create image") {
+            " If this persists, grant this app Screen Recording access in System Settings → Privacy & Security → Screen Recording."
+        } else {
+            ""
+        };
+        return Err(anyhow!(
+            "screencapture failed ({}): {}{}",
+            output.status,
+            stderr.trim(),
+            hint
+        ));
     }
     Ok(path)
 }
@@ -158,7 +211,7 @@ fn print_help() {
         "\
 drift-wallpaper
 
-With no flags, runs Flux as a live wallpaper on your desktop.
+With no flags, runs Drift as a live wallpaper on your desktop.
 Use --settings to open only the control panel.
 
 Quick flags:
@@ -166,9 +219,9 @@ Quick flags:
   --background                 Same as default (explicit)
   --preview                    Large movable preview window instead of wallpaper windows
 
-Flux profile:
+Drift profile:
   --preset <name>              One of: original, plasma, poolside, freedom
-  --image <path>               Use an image file as the Flux color source
+  --image <path>               Use an image file as the Drift color source
   --screenshot <path>          Same as --image
   --wallpaper-image            Use the current macOS wallpaper image as the color source
   --wallpaper-screenshot       Capture the current screen and use it as the color source

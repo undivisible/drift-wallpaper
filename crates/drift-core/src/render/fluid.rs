@@ -547,10 +547,10 @@ impl Context {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Advection layout"),
                 bind_group_layouts: &[
-                    &uniform_bind_group_layout,
-                    &advection_bind_group_layout,
-                    &advection_direction_bind_group_layout,
-                    &velocity_bind_group_layout,
+                    Some(&uniform_bind_group_layout),
+                    Some(&advection_bind_group_layout),
+                    Some(&advection_direction_bind_group_layout),
+                    Some(&velocity_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -622,9 +622,9 @@ impl Context {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:adjust_advection"),
                 bind_group_layouts: &[
-                    &uniform_bind_group_layout,
-                    &adjust_advection_bind_group_layout,
-                    &velocity_bind_group_layout,
+                    Some(&uniform_bind_group_layout),
+                    Some(&adjust_advection_bind_group_layout),
+                    Some(&velocity_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -656,7 +656,10 @@ impl Context {
         let diffusion_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:diffusion"),
-                bind_group_layouts: &[&uniform_bind_group_layout, &velocity_bind_group_layout],
+                bind_group_layouts: &[
+                    Some(&uniform_bind_group_layout),
+                    Some(&velocity_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -712,7 +715,10 @@ impl Context {
         let divergence_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:divergence"),
-                bind_group_layouts: &[&divergence_bind_group_layout, &velocity_bind_group_layout],
+                bind_group_layouts: &[
+                    Some(&divergence_bind_group_layout),
+                    Some(&velocity_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -831,9 +837,9 @@ impl Context {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:pressure"),
                 bind_group_layouts: &[
-                    &uniform_bind_group_layout,
-                    &divergence_sample_bind_group_layout,
-                    &pressure_bind_group_layout,
+                    Some(&uniform_bind_group_layout),
+                    Some(&divergence_sample_bind_group_layout),
+                    Some(&pressure_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -858,9 +864,9 @@ impl Context {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout:subtract_gradient"),
                 bind_group_layouts: &[
-                    &uniform_bind_group_layout,
-                    &pressure_bind_group_layout,
-                    &velocity_bind_group_layout,
+                    Some(&uniform_bind_group_layout),
+                    Some(&pressure_bind_group_layout),
+                    Some(&velocity_bind_group_layout),
                 ],
                 immediate_size: 0,
             });

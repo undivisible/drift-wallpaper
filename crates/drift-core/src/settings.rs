@@ -24,6 +24,9 @@ pub struct Settings {
     pub grid_spacing: u32,
     pub view_scale: f32,
 
+    /// Output multiplier for rendered wallpaper RGB (1.0 = unchanged; lower darkens).
+    pub wallpaper_brightness: f32,
+
     pub noise_multiplier: f32,
     pub noise_channels: Vec<Noise>,
 }
@@ -34,8 +37,8 @@ impl Default for Settings {
             mode: Mode::Normal,
             seed: None,
             fluid_size: 128,
-            fluid_frame_rate: 60.0,
-            fluid_timestep: 1.0 / 60.0,
+            fluid_frame_rate: 30.0,
+            fluid_timestep: 1.0 / 30.0,
             viscosity: 5.0,
             velocity_dissipation: 0.0,
             pressure_mode: PressureMode::ClearWith(0.0),
@@ -48,6 +51,7 @@ impl Default for Settings {
             line_variance: 0.55,
             grid_spacing: 15,
             view_scale: 1.6,
+            wallpaper_brightness: 1.0,
             noise_multiplier: 0.45,
             noise_channels: vec![
                 Noise {
@@ -96,11 +100,21 @@ impl Default for PressureMode {
 pub enum ColorMode {
     Preset(ColorPreset),
     ImageFile(std::path::PathBuf),
+    NowPlaying(NowPlayingSource),
 }
 
 impl Default for ColorMode {
     fn default() -> Self {
         Self::Preset(Default::default())
+    }
+}
+
+impl ColorMode {
+    pub fn now_playing_source(&self) -> Option<NowPlayingSource> {
+        match self {
+            ColorMode::NowPlaying(source) => Some(*source),
+            _ => None,
+        }
     }
 }
 
@@ -110,6 +124,26 @@ impl From<ColorMode> for u32 {
             ColorMode::Preset(ColorPreset::Original) => 0,
             ColorMode::Preset(_) => 1,
             ColorMode::ImageFile(_) => 2,
+            ColorMode::NowPlaying(_) => 3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NowPlayingSource {
+    #[default]
+    Automatic,
+    AppleMusic,
+    Spotify,
+}
+
+impl NowPlayingSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Automatic => "Automatic",
+            Self::AppleMusic => "Apple Music",
+            Self::Spotify => "Spotify",
         }
     }
 }

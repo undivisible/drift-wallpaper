@@ -11,6 +11,8 @@ struct LineUniforms {
   line_noise_blend_factor: f32,
   color_mode: u32,
   delta_time: f32,
+  output_brightness: f32,
+  _wgpu_pad: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: LineUniforms;
@@ -93,5 +95,6 @@ fn main_fs(fs_input: VertexOutput) -> @location(0) vec4<f32> {
 
   let distance = length(fs_input.f_vertex);
   let smoothEdges = 1.0 - smoothstep(1.0 - fwidth(distance), 1.0, distance);
-  return vec4<f32>(color.rgb, color.a * smoothEdges);
+  let rgb = color.rgb * uniforms.output_brightness;
+  return vec4<f32>(rgb, color.a * smoothEdges);
 }
