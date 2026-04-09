@@ -86,7 +86,11 @@ end tell
     }
 
     let key = format!("spotify::{title}::{artist}::{album}::{artwork_url}");
-    let image_path = artwork_cache_path("spotify", &key, if artwork_url.is_empty() { "png" } else { "jpg" });
+    let image_path = artwork_cache_path(
+        "spotify",
+        &key,
+        if artwork_url.is_empty() { "png" } else { "jpg" },
+    );
     if previous_key == Some(key.as_str()) && image_path.exists() {
         let palette = palette_from_image(&image_path);
         return Ok(Some(NowPlayingSnapshot {
@@ -168,7 +172,8 @@ fn write_solid_palette_png(path: &Path, palette: &[[f32; 3]; 3]) -> Result<()> {
             img.put_pixel(x, y, px);
         }
     }
-    img.save(path).with_context(|| format!("write {}", path.display()))?;
+    img.save(path)
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
 

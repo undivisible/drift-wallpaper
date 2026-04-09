@@ -1,8 +1,8 @@
 mod cli;
 mod color_picker;
+mod config;
 mod crepus_interactive;
 mod crepus_settings_render;
-mod config;
 mod launch_agent;
 mod media_art;
 mod now_playing;
@@ -118,7 +118,8 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
     }
 
     fn sync_windows(app: &mut App, event_loop: &ActiveEventLoop) {
-        let (desired_signature, window_specs, monitor_handles) = build_window_specs(app, event_loop);
+        let (desired_signature, window_specs, monitor_handles) =
+            build_window_specs(app, event_loop);
 
         if app.window_signature.as_ref() != Some(&desired_signature) {
             app.windows.clear();
@@ -429,12 +430,11 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 settings =
                     materialize_runtime_settings(settings, self.now_playing_snapshot.as_ref());
 
-                let uses_now_playing = display_uses_now_playing_colors(
-                    &cfg,
-                    &display.monitor_id,
-                    self.wallpaper_mode,
-                );
-                let np_key = uses_now_playing.then(|| self.now_playing_key.clone()).flatten();
+                let uses_now_playing =
+                    display_uses_now_playing_colors(&cfg, &display.monitor_id, self.wallpaper_mode);
+                let np_key = uses_now_playing
+                    .then(|| self.now_playing_key.clone())
+                    .flatten();
                 let np_key_changed = display.applied_now_playing_key != np_key;
 
                 if display.applied_settings != settings || np_key_changed {
@@ -673,11 +673,8 @@ fn set_desktop_window_level(window: &winit::window::Window) {
 /// rather than falling back to the main screen — falling back would overlay two windows on the
 /// primary monitor and leave the secondary monitor uncovered.
 #[cfg(target_os = "macos")]
-fn macos_snap_wallpaper_window_to_monitor(
-    window: &winit::window::Window,
-    monitor: &MonitorHandle,
-) {
-    use objc2_app_kit::{NSView, NSScreen};
+fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monitor: &MonitorHandle) {
+    use objc2_app_kit::{NSScreen, NSView};
     use objc2_foundation::NSRect;
     use winit::platform::macos::MonitorHandleExtMacOS;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -713,7 +710,7 @@ fn macos_snap_wallpaper_window_to_monitor(
 /// One window spanning all displays: match the union of every `NSScreen.frame` in global coordinates.
 #[cfg(target_os = "macos")]
 fn macos_snap_wallpaper_window_to_union_of_screens(window: &winit::window::Window) {
-    use objc2_app_kit::{NSView, NSScreen};
+    use objc2_app_kit::{NSScreen, NSView};
     use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 

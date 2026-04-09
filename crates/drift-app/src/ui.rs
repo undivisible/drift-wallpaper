@@ -733,10 +733,7 @@ fn build_settings_context(cfg: &AppConfig) -> TemplateContext {
             format!("palette_swatch_{index}_action"),
             format!("pick_palette_swatch__{index}"),
         );
-        tctx.set(
-            format!("palette_swatch_{index}_selected"),
-            hex == accent,
-        );
+        tctx.set(format!("palette_swatch_{index}_selected"), hex == accent);
     }
     tctx.set(
         "wallpaper_brightness",

@@ -163,8 +163,8 @@ fn worker_loop(
 
         // If we recently received a Spotify notification and haven't detected a change yet,
         // poll frequently to catch up with Spotify's lagging internal state.
-        let in_spotify_retry_window = last_notification_at
-            .is_some_and(|t| t.elapsed() < SPOTIFY_NOTIFICATION_RETRY_WINDOW);
+        let in_spotify_retry_window =
+            last_notification_at.is_some_and(|t| t.elapsed() < SPOTIFY_NOTIFICATION_RETRY_WINDOW);
 
         let refresh_interval = if transition.is_some() {
             TRANSITION_TICK
