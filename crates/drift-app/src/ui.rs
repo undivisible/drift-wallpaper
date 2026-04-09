@@ -150,19 +150,15 @@ impl DriftUi {
             multiple: false,
             prompt: Some("Choose an image".into()),
         });
-        match pollster::block_on(rx) {
-            Ok(Ok(Some(paths))) => {
-                let Some(path) = paths.first() else {
-                    return;
-                };
-                let mut cfg = self.read_config();
-                match cli::apply_image_palette(&mut cfg, path).and_then(|_| self.save_config(&cfg))
-                {
-                    Ok(()) => cx.notify(),
-                    Err(e) => log::warn!("image palette: {e}"),
-                }
+        if let Ok(Ok(Some(paths))) = pollster::block_on(rx) {
+            let Some(path) = paths.first() else {
+                return;
+            };
+            let mut cfg = self.read_config();
+            match cli::apply_image_palette(&mut cfg, path).and_then(|_| self.save_config(&cfg)) {
+                Ok(()) => cx.notify(),
+                Err(e) => log::warn!("image palette: {e}"),
             }
-            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => {}
         }
     }
 

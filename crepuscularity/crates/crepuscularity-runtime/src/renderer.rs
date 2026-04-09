@@ -130,7 +130,7 @@ fn attach_interactive_handlers<T: CrepusMouseDispatch + 'static>(
     handlers: &[EventHandler],
     ix: Option<&WeakEntity<T>>,
 ) -> gpui::Div {
-    let Some(weak) = ix.map(|w| w.clone()) else {
+    let Some(weak) = ix.cloned() else {
         return d;
     };
     for h in handlers {
