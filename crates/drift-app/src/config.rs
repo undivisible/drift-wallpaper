@@ -3,6 +3,9 @@
 // Items in this module are used only from the macOS-specific code path.
 #![allow(dead_code)]
 
+/// Child settings process (spawned from the tray) skips installing a second menu bar icon.
+pub const SUPPRESS_MENU_BAR_TRAY_ENV: &str = "DRIFT_SUPPRESS_MENU_BAR_TRAY";
+
 use anyhow::{Context, Result};
 use drift_core::{
     color::{ColorPalette, Preset},
@@ -26,7 +29,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            params: DriftParams::from_palette(&ColorPalette::preset(Preset::Midnight), 1.0),
+            params: DriftParams::from_palette(&ColorPalette::preset(Preset::FluxOriginal), 1.0),
             launch_at_login: false,
         }
     }

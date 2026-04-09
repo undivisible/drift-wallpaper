@@ -17,9 +17,8 @@ mod macos {
     };
     use objc2_foundation::{CGPoint, CGRect, CGSize, MainThreadMarker};
 
-    /// `kCGDesktopWindowLevel` – the window level used by the macOS desktop
-    /// (below the Dock and all application windows).
-    const DESKTOP_WINDOW_LEVEL: i64 = -2147483630;
+    /// `kCGDesktopWindowLevel` from `CGWindowLevel.h`: `INT32_MIN + 5 + 20`.
+    const DESKTOP_WINDOW_LEVEL: i64 = i32::MIN as i64 + 5 + 20;
 
     /// One wallpaper window covering a single display.
     pub struct WallpaperWindow {

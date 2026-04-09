@@ -3,6 +3,9 @@
 //! # Architecture
 //!
 //! ```text
+//! Default (no CLI flags): live wallpaper on the desktop + menu bar (macOS).
+//! `drift-wallpaper --settings` opens only the control panel.
+//!
 //! main ──► event loop (winit / AppKit on macOS)
 //!            │
 //!            ├─ wallpaper windows (macOS) or a preview window (Linux/Windows)
@@ -25,6 +28,15 @@ mod ui;
 #[cfg(target_os = "macos")]
 mod menubar;
 
+fn init_logging() {
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    // wgpu can log `Device::maintain: waiting for submission` at INFO every frame.
+    builder.filter_module("wgpu_core::device::resource", log::LevelFilter::Warn);
+    builder.filter_module("wgpu_hal", log::LevelFilter::Warn);
+    builder.init();
+}
+
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -39,7 +51,7 @@ use winit::{
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    init_logging();
     let mut config = config::AppConfig::load();
     let action = cli::apply_cli_args(&mut config)?;
     match action {
@@ -62,7 +74,7 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    init_logging();
     let mut config = config::AppConfig::load();
     let action = cli::apply_cli_args(&mut config)?;
     match action {
@@ -120,8 +132,14 @@ fn run_app(config: Arc<Mutex<config::AppConfig>>, wallpaper_mode: bool) -> Resul
 
             let params = self.config.lock().unwrap().params.clone();
             let window_specs = if self.wallpaper_mode {
-                event_loop
-                    .available_monitors()
+                let mut monitors: Vec<_> = event_loop.available_monitors().collect();
+                if monitors.is_empty() {
+                    if let Some(primary) = event_loop.primary_monitor() {
+                        monitors.push(primary);
+                    }
+                }
+                monitors
+                    .into_iter()
                     .map(|monitor| {
                         let size = monitor.size();
                         let position = monitor.position();
@@ -218,8 +236,12 @@ fn run_app(config: Arc<Mutex<config::AppConfig>>, wallpaper_mode: bool) -> Resul
                 }
                 self.last_config_refresh = Instant::now();
             }
-            for display in &self.windows {
-                display.window.request_redraw();
+            // Avoid requesting frames while paused: wgpu otherwise keeps "waiting for submission"
+            // on redraws that never submit work.
+            if self.config.lock().unwrap().enabled {
+                for display in &self.windows {
+                    display.window.request_redraw();
+                }
             }
         }
     }
@@ -256,18 +278,25 @@ fn create_renderer(
 }
 
 /// Set the window level to `kCGDesktopWindowLevel` on macOS so the window
-/// sits behind all application windows but above the real desktop.
+/// sits in the desktop layer with the static wallpaper (see `CGWindowLevel.h`:
+/// `kCGDesktopWindowLevel = kCGMinimumWindowLevel + 20`, i.e. `INT32_MIN + 5 + 20`).
+///
+/// Previously this used `-2147483630`, which sits *below* that level and can
+/// leave the renderer invisible behind the system wallpaper.
 #[cfg(target_os = "macos")]
 fn set_desktop_window_level(window: &winit::window::Window) {
-    use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
+    use objc2_app_kit::{NSView, NSWindowCollectionBehavior, NSWindowLevel};
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    /// `kCGDesktopWindowLevel` (`CGWindowLevel.h`: `INT32_MIN + 5 + 20`).
+    const CG_DESKTOP_WINDOW_LEVEL: NSWindowLevel = i32::MIN as NSWindowLevel + 5 + 20;
 
     if let Ok(handle) = window.window_handle() {
         if let RawWindowHandle::AppKit(h) = handle.as_raw() {
             let ns_view = h.ns_view.as_ptr() as *const NSView;
             unsafe {
                 if let Some(ns_window) = (*ns_view).window() {
-                    ns_window.setLevel(-2147483630);
+                    ns_window.setLevel(CG_DESKTOP_WINDOW_LEVEL);
                     ns_window.setIgnoresMouseEvents(true);
                     let behavior = NSWindowCollectionBehavior::CanJoinAllSpaces
                         | NSWindowCollectionBehavior::Stationary

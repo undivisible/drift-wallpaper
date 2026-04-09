@@ -19,7 +19,8 @@ pub enum StartupAction {
 
 pub fn apply_cli_args(config: &mut AppConfig) -> Result<StartupAction> {
     let mut args = std::env::args().skip(1).peekable();
-    let mut mode = RunMode::Ui;
+    // Default: live wallpaper on the desktop (see --settings for control panel only).
+    let mut mode = RunMode::Background;
     let mut changed = false;
     let mut print_config = false;
 
@@ -28,6 +29,9 @@ pub fn apply_cli_args(config: &mut AppConfig) -> Result<StartupAction> {
             "--help" | "-h" => {
                 print_help();
                 return Ok(StartupAction::Exit);
+            }
+            "--settings" | "--ui" => {
+                mode = RunMode::Ui;
             }
             "--background" => {
                 mode = RunMode::Background;
@@ -105,12 +109,16 @@ pub fn apply_custom_colors(config: &mut AppConfig, value: &str) -> Result<()> {
 
 fn parse_preset(value: &str) -> Result<Preset> {
     match value.trim().to_ascii_lowercase().as_str() {
+        "flux_original" | "flux-original" | "original" | "drift" => Ok(Preset::FluxOriginal),
+        "flux_plasma" | "flux-plasma" | "plasma" => Ok(Preset::FluxPlasma),
+        "flux_poolside" | "flux-poolside" | "poolside" => Ok(Preset::FluxPoolside),
+        "flux_freedom" | "flux-freedom" | "freedom" => Ok(Preset::FluxFreedom),
         "ocean" => Ok(Preset::Ocean),
         "sunset" => Ok(Preset::Sunset),
         "forest" => Ok(Preset::Forest),
         "lava" => Ok(Preset::Lava),
         "midnight" => Ok(Preset::Midnight),
-        "monochrome" => Ok(Preset::Monochrome),
+        "monochrome" | "mono" => Ok(Preset::Monochrome),
         _ => bail!("Unknown preset '{value}'"),
     }
 }
@@ -260,15 +268,21 @@ fn print_help() {
         "\
 drift-wallpaper
 
-Options:
+With no flags, runs the live wallpaper on your desktop (respects saved on/off in config).
+Use --settings to open only the control panel.
+
+Quick flags:
+  --settings, --ui             Control panel window (tray icon also on macOS unless spawned from tray)
+  --background                 Same as default (explicit)
+  --preview                    Large movable preview window instead of full-desktop wallpaper
+
+Palette / config:
   --preset <name>              Use a built-in palette
   --colors <c1,c2,c3>          Set three custom colors, e.g. '#0a1020,#4060b0,#f5d070'
   --image <path>               Extract colors from an image file
   --screenshot <path>          Extract colors from a screenshot file
   --wallpaper-image            Extract colors from the current macOS wallpaper image
   --wallpaper-screenshot       Capture the current screen and extract colors from it
-  --background                 Run the renderer as desktop background mode
-  --preview                    Force preview-window mode instead of desktop background mode
   --print-config               Print the current saved config and exit
   --help                       Show this help
 "

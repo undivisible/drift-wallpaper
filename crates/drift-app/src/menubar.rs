@@ -1,6 +1,7 @@
 //! macOS menubar status item implemented with objc2.
 //!
 //! Provides a 🌊 icon in the system menu bar with the following options:
+//! - Open Settings (separate window; does not add a second tray icon)
 //! - Enable / Disable wallpaper (persists to config)
 //! - Select colour preset (Ocean, Sunset, Forest, Lava, Midnight, Monochrome)
 //! - Extract colors from an image via NSOpenPanel
@@ -9,28 +10,42 @@
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::cell::RefCell;
     use std::sync::{Arc, Mutex, OnceLock};
 
+    use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
-    use objc2::msg_send;
     use objc2::sel;
     use objc2::{define_class, MainThreadOnly};
     use objc2_app_kit::{
-        NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSMenu, NSMenuItem,
-        NSModalResponseOK, NSOpenPanel, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+        NSAlert, NSAlertStyle, NSApplication, NSControlStateValueOff, NSControlStateValueOn,
+        NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSStatusBar, NSStatusItem,
+        NSVariableStatusItemLength,
     };
     use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 
     use crate::cli;
-    use crate::config::AppConfig;
+    use crate::config::{AppConfig, SUPPRESS_MENU_BAR_TRAY_ENV};
     use crate::launch_agent;
 
     pub type SharedConfig = Arc<Mutex<AppConfig>>;
 
     static MENU_CONFIG: OnceLock<SharedConfig> = OnceLock::new();
-    /// Address of a leaked `Retained<DriftMenuTarget>` (main thread only).
-    static MENU_TARGET_ADDR: OnceLock<usize> = OnceLock::new();
+
+    // Retains the menu target for the process lifetime (AppKit does not retain `setTarget:`).
+    // Main-thread `thread_local` avoids leaking `Retained` and keeps the type off `Sync` statics.
+    thread_local! {
+        static MENU_TARGET: RefCell<Option<Retained<DriftMenuTarget>>> = const { RefCell::new(None) };
+    }
+
+    fn show_error_alert(mtm: MainThreadMarker, title: &str, detail: &str) {
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str(title));
+        alert.setInformativeText(&NSString::from_str(detail));
+        alert.setAlertStyle(NSAlertStyle::Warning);
+        let _ = alert.runModal();
+    }
 
     define_class!(
         #[unsafe(super(NSObject))]
@@ -39,6 +54,20 @@ mod macos {
         struct DriftMenuTarget;
 
         impl DriftMenuTarget {
+            #[unsafe(method(driftOpenSettings:))]
+            fn open_settings(&self, _sender: Option<&AnyObject>) {
+                let Ok(exe) = std::env::current_exe() else {
+                    return;
+                };
+                if let Err(err) = std::process::Command::new(exe)
+                    .arg("--settings")
+                    .env(SUPPRESS_MENU_BAR_TRAY_ENV, "1")
+                    .spawn()
+                {
+                    log::error!("Failed to open Drift settings: {err}");
+                }
+            }
+
             #[unsafe(method(driftToggleEnabled:))]
             fn toggle_enabled(&self, _sender: Option<&AnyObject>) {
                 let Some(cfg) = MENU_CONFIG.get() else {
@@ -130,6 +159,15 @@ mod macos {
                     if let Err(err) = agent_res.and_then(|_| g.save()) {
                         log::error!("Failed to update launch-at-login: {err}");
                         g.launch_at_login = !next;
+                        let mtm =
+                            MainThreadMarker::new().expect("menu actions must run on the main thread");
+                        show_error_alert(
+                            mtm,
+                            "Couldn’t update Start at Login",
+                            &format!(
+                                "{err}\n\nYour preference was reverted; try again or check Console for details."
+                            ),
+                        );
                     }
                 }
             }
@@ -147,12 +185,14 @@ mod macos {
         }
     }
 
-    fn menu_target_raw(mtm: MainThreadMarker) -> *mut DriftMenuTarget {
-        let addr = *MENU_TARGET_ADDR.get_or_init(|| {
-            let t = DriftMenuTarget::new(mtm);
-            Retained::into_raw(t) as usize
-        });
-        addr as *mut DriftMenuTarget
+    fn menu_target_ptr(mtm: MainThreadMarker) -> *mut DriftMenuTarget {
+        MENU_TARGET.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(DriftMenuTarget::new(mtm));
+            }
+            Retained::as_ptr(slot.as_ref().expect("just set")) as *mut DriftMenuTarget
+        })
     }
 
     pub fn create_status_item(
@@ -160,7 +200,7 @@ mod macos {
         config: SharedConfig,
     ) -> Retained<NSStatusItem> {
         let _ = MENU_CONFIG.set(Arc::clone(&config));
-        let target_ptr = menu_target_raw(mtm);
+        let target_ptr = menu_target_ptr(mtm);
 
         let status_bar = NSStatusBar::systemStatusBar();
         let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
@@ -182,14 +222,17 @@ mod macos {
         target_ptr: *mut DriftMenuTarget,
     ) -> Retained<NSMenu> {
         let menu = NSMenu::new(mtm);
+
+        let settings_item =
+            make_action_item(mtm, "Open Settings…", sel!(driftOpenSettings:), target_ptr);
+        menu.addItem(&settings_item);
+
+        separator(&menu, mtm);
+
         let enabled = config.lock().unwrap().enabled;
 
-        let toggle_item = make_action_item(
-            mtm,
-            "Wallpaper live",
-            sel!(driftToggleEnabled:),
-            target_ptr,
-        );
+        let toggle_item =
+            make_action_item(mtm, "Wallpaper live", sel!(driftToggleEnabled:), target_ptr);
         toggle_item.setState(if enabled {
             NSControlStateValueOn
         } else {
@@ -202,12 +245,7 @@ mod macos {
         let presets_item = make_item(mtm, "Colour Preset", None);
         let presets_menu = NSMenu::new(mtm);
         for (idx, preset) in drift_core::color::Preset::all().iter().enumerate() {
-            let item = make_action_item(
-                mtm,
-                preset.label(),
-                sel!(driftApplyPreset:),
-                target_ptr,
-            );
+            let item = make_action_item(mtm, preset.label(), sel!(driftApplyPreset:), target_ptr);
             item.setTag(idx as isize);
             presets_menu.addItem(&item);
         }
@@ -225,12 +263,8 @@ mod macos {
         separator(&menu, mtm);
 
         let login = config.lock().unwrap().launch_at_login;
-        let login_item = make_action_item(
-            mtm,
-            "Start at Login",
-            sel!(driftToggleLogin:),
-            target_ptr,
-        );
+        let login_item =
+            make_action_item(mtm, "Start at Login", sel!(driftToggleLogin:), target_ptr);
         login_item.setState(if login {
             NSControlStateValueOn
         } else {
@@ -240,7 +274,12 @@ mod macos {
 
         separator(&menu, mtm);
 
-        let quit_item = make_action_item(mtm, "Quit Drift Wallpaper", sel!(terminate:), std::ptr::null_mut());
+        let quit_item = make_action_item(
+            mtm,
+            "Quit Drift Wallpaper",
+            sel!(terminate:),
+            std::ptr::null_mut(),
+        );
         let app = NSApplication::sharedApplication(mtm);
         unsafe {
             quit_item.setTarget(Some(app.as_ref()));
@@ -250,7 +289,11 @@ mod macos {
         menu
     }
 
-    fn make_item(mtm: MainThreadMarker, title: &str, action: Option<objc2::runtime::Sel>) -> Retained<NSMenuItem> {
+    fn make_item(
+        mtm: MainThreadMarker,
+        title: &str,
+        action: Option<objc2::runtime::Sel>,
+    ) -> Retained<NSMenuItem> {
         let title_ns = NSString::from_str(title);
         let key = NSString::from_str("");
         unsafe {

@@ -1,0 +1,90 @@
++++
+[Card.defaults]
+title = ""
+
++++
+
+--- Card
+div rounded-lg border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3
+  div text-xs font-semibold uppercase tracking-wider text-zinc-500
+    {title}
+  slot
+
+--- SettingsRoot
+div w-full h-full flex flex-col min-h-0 bg-zinc-950 text-zinc-100 text-sm
+  div shrink-0 flex items-center justify-between px-4 py-3 border-b border-zinc-800
+    div text-lg font-semibold tracking-tight
+      "Drift Wallpaper"
+    div px-2 py-1 rounded-md text-zinc-400 cursor-pointer @mouseup=close_window
+      "Close"
+
+  div flex-1 min-h-0 overflow-y-scroll px-4 py-4 flex flex-col gap-4
+
+    include settings_ui.crepus#Card title="Session"
+      div flex flex-col gap-3
+        div flex items-center justify-between gap-4
+          div text-sm font-medium min-w-0 flex-1
+            "Live wallpaper"
+          if {enabled}
+            div px-3 py-1 rounded-md bg-blue-600 text-white text-xs cursor-pointer @mouseup=toggle_wallpaper_enabled
+              "On"
+          else
+            div px-3 py-1 rounded-md bg-zinc-700 text-zinc-300 text-xs cursor-pointer @mouseup=toggle_wallpaper_enabled
+              "Off"
+        if {macos}
+          div flex items-center justify-between gap-4
+            div text-sm font-medium min-w-0 flex-1
+              "Open at login"
+            if {launch_at_login}
+              div px-3 py-1 rounded-md bg-blue-600 text-white text-xs cursor-pointer @mouseup=toggle_launch_at_login
+                "On"
+            else
+              div px-3 py-1 rounded-md bg-zinc-700 text-zinc-300 text-xs cursor-pointer @mouseup=toggle_launch_at_login
+                "Off"
+
+    include settings_ui.crepus#Card title="Palette"
+      div flex items-center gap-3 flex-wrap
+        div text-xs font-semibold uppercase tracking-wide text-zinc-400
+          "Gradient stops"
+        div w-10 h-10 rounded-md border border-zinc-600 cursor-pointer bg-{color_a_hex} @mouseup=swatch_0
+        div w-10 h-10 rounded-md border border-zinc-600 cursor-pointer bg-{color_b_hex} @mouseup=swatch_1
+        div w-10 h-10 rounded-md border border-zinc-600 cursor-pointer bg-{color_c_hex} @mouseup=swatch_2
+
+    include settings_ui.crepus#Card title="Presets"
+      div flex flex-wrap gap-2
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_original
+          "Original"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_plasma
+          "Plasma"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_poolside
+          "Poolside"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_flux_freedom
+          "Freedom"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_ocean
+          "Ocean"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_sunset
+          "Sunset"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_forest
+          "Forest"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_lava
+          "Lava"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_midnight
+          "Midnight"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=preset_monochrome
+          "Mono"
+
+    include settings_ui.crepus#Card title="Match a reference"
+      div flex flex-wrap gap-2
+        div px-3 py-2 rounded-md bg-blue-600 text-xs font-semibold text-white cursor-pointer @mouseup=pick_image_file
+          "Choose image…"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=apply_wallpaper_image
+          "From desktop wallpaper"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=apply_wallpaper_screenshot
+          "From screen capture"
+
+    include settings_ui.crepus#Card title="Engine"
+      div flex flex-wrap gap-2
+        div px-3 py-2 rounded-md bg-blue-600 text-xs font-semibold text-white cursor-pointer @mouseup=open_background
+          "Start live wallpaper"
+        div px-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-medium text-zinc-200 cursor-pointer @mouseup=open_preview
+          "Open preview"
