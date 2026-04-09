@@ -608,13 +608,23 @@ impl Render for DriftUi {
         let tctx = build_settings_context(&cfg);
         let body = render_nodes_interactive(&root.nodes, &tctx, cx);
         let viewport_h = window.bounds().size.height;
+        // Flex + overflow boundary so the inner `overflow-y-scroll` region gets a bounded
+        // height (otherwise a single flex child grows with content and never scrolls).
         div()
             .w_full()
             .h(viewport_h)
             .flex()
             .flex_col()
             .min_h(px(0.))
-            .child(body)
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_hidden()
+                    .child(body),
+            )
             .into_any_element()
     }
 }

@@ -108,8 +108,10 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         windows: Vec<DisplayWindow>,
         window_signature: Option<WindowSignature>,
         last_config_refresh: Instant,
+        /// Last `wallpaper_profile().color_mode.now_playing_source()` we saw — only this
+        /// drives clearing artwork when the user changes mode; never compare worker metadata.
+        wallpaper_profile_np_source_seen: Option<drift_core::NowPlayingSource>,
         now_playing_key: Option<String>,
-        now_playing_source: Option<drift_core::NowPlayingSource>,
         now_playing_snapshot: Option<media_art::NowPlayingSnapshot>,
         now_playing_controller: Option<now_playing::NowPlayingController>,
         now_playing_updates_rx: std::sync::mpsc::Receiver<now_playing::NowPlayingUpdate>,
@@ -387,12 +389,9 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 Err(_) => return,
             };
 
-            // Drain now-playing updates from the worker thread. Do not filter by
-            // `update.source`: the snapshot is only applied when color mode is NowPlaying;
-            // filtering caused missed updates when config/source timing briefly disagreed.
-            let current_source = cfg.wallpaper_profile().color_mode.now_playing_source();
+            let current_np_source = cfg.wallpaper_profile().color_mode.now_playing_source();
+
             while let Ok(update) = self.now_playing_updates_rx.try_recv() {
-                self.now_playing_source = update.source;
                 match update.snapshot {
                     Some(snapshot) => {
                         self.now_playing_key = Some(snapshot.key.clone());
@@ -405,11 +404,10 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             }
 
-            // Detect now-playing source change in config and force a worker refresh.
-            if self.now_playing_source != current_source {
+            if self.wallpaper_profile_np_source_seen != current_np_source {
                 self.now_playing_key = None;
-                self.now_playing_source = current_source;
                 self.now_playing_snapshot = None;
+                self.wallpaper_profile_np_source_seen = current_np_source;
                 if let Some(controller) = &self.now_playing_controller {
                     controller.request_refresh();
                 }
@@ -477,7 +475,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         window_signature: None,
         last_config_refresh: Instant::now(),
         now_playing_key: None,
-        now_playing_source: None,
+        wallpaper_profile_np_source_seen: None,
         now_playing_snapshot: None,
         now_playing_controller: Some(now_playing_controller),
         now_playing_updates_rx,
@@ -567,19 +565,35 @@ fn combined_monitor_bounds(
     winit::dpi::PhysicalPosition<i32>,
     winit::dpi::PhysicalSize<u32>,
 )> {
-    let first = monitors.first()?;
-    let mut min_x = first.position().x;
-    let mut min_y = first.position().y;
-    let mut max_x = first.position().x + first.size().width as i32;
-    let mut max_y = first.position().y + first.size().height as i32;
+    let rects: Vec<(i32, i32, u32, u32)> = monitors
+        .iter()
+        .map(|m| {
+            let p = m.position();
+            let s = m.size();
+            (p.x, p.y, s.width, s.height)
+        })
+        .collect();
+    combined_bounds_from_rects(&rects)
+}
 
-    for monitor in monitors.iter().skip(1) {
-        let position = monitor.position();
-        let size = monitor.size();
-        min_x = min_x.min(position.x);
-        min_y = min_y.min(position.y);
-        max_x = max_x.max(position.x + size.width as i32);
-        max_y = max_y.max(position.y + size.height as i32);
+/// Union of monitor rectangles in physical coordinates (top-left x/y, width, height).
+fn combined_bounds_from_rects(
+    rects: &[(i32, i32, u32, u32)],
+) -> Option<(
+    winit::dpi::PhysicalPosition<i32>,
+    winit::dpi::PhysicalSize<u32>,
+)> {
+    let &(x0, y0, w0, h0) = rects.first()?;
+    let mut min_x = x0;
+    let mut min_y = y0;
+    let mut max_x = x0 + w0 as i32;
+    let mut max_y = y0 + h0 as i32;
+
+    for &(x, y, w, h) in rects.iter().skip(1) {
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x + w as i32);
+        max_y = max_y.max(y + h as i32);
     }
 
     Some((
@@ -740,14 +754,141 @@ fn macos_snap_wallpaper_window_to_union_of_screens(window: &winit::window::Windo
     if let Ok(handle) = window.window_handle() {
         if let RawWindowHandle::AppKit(h) = handle.as_raw() {
             let ns_view = h.ns_view.as_ptr() as *const NSView;
-                    unsafe {
-                        if let Some(ns_window) = (*ns_view).window() {
-                            // `true` asks AppKit to update display wiring promptly (important when
-                            // the window spans multiple `NSScreen`s).
-                            ns_window.setFrame_display(union, true);
-                            ns_window.orderFrontRegardless();
-                        }
-                    }
+            unsafe {
+                if let Some(ns_window) = (*ns_view).window() {
+                    // `true` asks AppKit to update display wiring promptly (important when
+                    // the window spans multiple `NSScreen`s).
+                    ns_window.setFrame_display(union, true);
+                    ns_window.orderFrontRegardless();
+                }
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, MonitorConfig, MonitorMode, WallpaperLayout};
+    use drift_core::{ColorMode, ColorPreset, NowPlayingSource, Settings};
+
+    #[test]
+    fn slugify_alphanumeric_and_separators() {
+        assert_eq!(slugify("LG HDR 4K"), "lg-hdr-4k");
+        assert_eq!(
+            slugify("Built-in Retina Display"),
+            "built-in-retina-display"
+        );
+    }
+
+    #[test]
+    fn slugify_non_word_fallback() {
+        assert_eq!(slugify("!!!"), "display");
+        assert_eq!(slugify(""), "display");
+    }
+
+    #[test]
+    fn combined_bounds_single_rect() {
+        let r = [(0, 0, 1920, 1080)];
+        let (pos, size) = combined_bounds_from_rects(&r).unwrap();
+        assert_eq!(pos.x, 0);
+        assert_eq!(pos.y, 0);
+        assert_eq!(size.width, 1920);
+        assert_eq!(size.height, 1080);
+    }
+
+    #[test]
+    fn combined_bounds_two_side_by_side() {
+        let r = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
+        let (pos, size) = combined_bounds_from_rects(&r).unwrap();
+        assert_eq!(pos.x, 0);
+        assert_eq!(size.width, 3840);
+        assert_eq!(size.height, 1080);
+    }
+
+    #[test]
+    fn combined_bounds_negative_origin() {
+        let r = [(-1920, 0, 1920, 1080), (0, 0, 1920, 1080)];
+        let (pos, size) = combined_bounds_from_rects(&r).unwrap();
+        assert_eq!(pos.x, -1920);
+        assert_eq!(size.width, 3840);
+    }
+
+    #[test]
+    fn materialize_now_playing_with_snapshot() {
+        let path = std::path::PathBuf::from("/tmp/x.png");
+        let snap = media_art::NowPlayingSnapshot {
+            key: "k".into(),
+            image_path: path.clone(),
+            palette: [[0.; 3]; 3],
+            accent_hex: "#000000".into(),
+        };
+        let s = Settings {
+            color_mode: ColorMode::NowPlaying(NowPlayingSource::Spotify),
+            ..Default::default()
+        };
+        let out = materialize_runtime_settings(s, Some(&snap));
+        assert_eq!(out.color_mode, ColorMode::ImageFile(path));
+    }
+
+    #[test]
+    fn materialize_now_playing_without_snapshot_falls_back_preset() {
+        let s = Settings {
+            color_mode: ColorMode::NowPlaying(NowPlayingSource::Automatic),
+            ..Default::default()
+        };
+        let out = materialize_runtime_settings(s, None);
+        assert_eq!(out.color_mode, ColorMode::Preset(ColorPreset::Original));
+    }
+
+    #[test]
+    fn materialize_preset_untouched() {
+        let s = Settings::default();
+        let out = materialize_runtime_settings(s.clone(), None);
+        assert_eq!(out.color_mode, s.color_mode);
+    }
+
+    #[test]
+    fn display_uses_now_playing_linked_span() {
+        let mut cfg = AppConfig {
+            wallpaper_layout: WallpaperLayout::SpanDisplays,
+            monitor_mode: MonitorMode::Linked,
+            shared_profile: Settings {
+                color_mode: ColorMode::NowPlaying(NowPlayingSource::Spotify),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        cfg.monitors.insert(
+            "m1".into(),
+            MonitorConfig {
+                monitor_id: "m1".into(),
+                name_hint: "M1".into(),
+                drift_settings: Settings::default(),
+            },
+        );
+        assert!(display_uses_now_playing_colors(&cfg, "m1", true));
+    }
+
+    #[test]
+    fn display_uses_now_playing_independent_monitor() {
+        let mut cfg = AppConfig {
+            monitor_mode: MonitorMode::Independent,
+            wallpaper_layout: WallpaperLayout::PerMonitor,
+            ..Default::default()
+        };
+        cfg.monitors.insert(
+            "mid".into(),
+            MonitorConfig {
+                monitor_id: "mid".into(),
+                name_hint: "Ext".into(),
+                drift_settings: Settings {
+                    color_mode: ColorMode::NowPlaying(NowPlayingSource::AppleMusic),
+                    ..Default::default()
+                },
+            },
+        );
+        assert!(display_uses_now_playing_colors(&cfg, "mid", true));
+        assert!(!display_uses_now_playing_colors(&cfg, "missing", true));
     }
 }

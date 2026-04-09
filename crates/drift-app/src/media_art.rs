@@ -66,6 +66,12 @@ end tell
         .output()
         .context("run Spotify now playing query")?;
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::warn!(
+            "Spotify osascript exited with {}: {} (grant Automation for Spotify to this app if empty track data)",
+            output.status,
+            stderr.trim()
+        );
         return Ok(None);
     }
 
@@ -195,6 +201,12 @@ return currentTrackName & linefeed & currentTrackArtist & linefeed & currentTrac
         .output()
         .context("run Apple Music now playing query")?;
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::warn!(
+            "Apple Music osascript exited with {}: {}",
+            output.status,
+            stderr.trim()
+        );
         return Ok(None);
     }
 

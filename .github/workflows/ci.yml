@@ -10,9 +10,6 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
-# The workspace vendors Crepuscularity + GPUI under `crepuscularity/` and patches `gpui` via
-# `[patch.crates-io]` in the root `Cargo.toml` — no extra checkout or submodules required.
-
 jobs:
   lint:
     name: Lint
@@ -38,10 +35,10 @@ jobs:
             libxi-dev
 
       - name: Rust fmt check
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -68,11 +65,11 @@ jobs:
             libxrandr-dev \
             libxi-dev
 
-      - name: Test (all)
-        run: cargo test --workspace
+      - name: Test (workspace, all targets)
+        run: cargo test --workspace --all-targets --locked
 
       - name: Build release binary
-        run: cargo build --release -p drift-app
+        run: cargo build --locked --release -p drift-app
 
       - name: Verify cargo install
         run: cargo install --path crates/drift-app --locked --force

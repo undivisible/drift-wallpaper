@@ -40,7 +40,6 @@ const SPOTIFY_NOTIFICATION_RETRY_INTERVAL: Duration = Duration::from_millis(500)
 
 #[derive(Debug, Clone)]
 pub struct NowPlayingUpdate {
-    pub source: Option<NowPlayingSource>,
     pub snapshot: Option<NowPlayingSnapshot>,
 }
 
@@ -175,9 +174,9 @@ fn worker_loop(
             match current_source {
                 // Faster polling when a desktop player is selected — distributed
                 // notifications are best-effort; AppleScript rounds out track changes.
-                Some(NowPlayingSource::Spotify) => Duration::from_secs(3),
+                Some(NowPlayingSource::Spotify) => Duration::from_millis(900),
                 Some(NowPlayingSource::AppleMusic) => Duration::from_secs(3),
-                Some(NowPlayingSource::Automatic) => Duration::from_secs(8),
+                Some(NowPlayingSource::Automatic) => Duration::from_secs(6),
                 None => Duration::from_secs(30),
             }
         };
@@ -214,10 +213,7 @@ fn worker_loop(
                     last_source = current_source;
                     last_notification_at = None;
                     apply_ui_accent(&config, None);
-                    let _ = update_tx.send(NowPlayingUpdate {
-                        source: current_source,
-                        snapshot: None,
-                    });
+                    let _ = update_tx.send(NowPlayingUpdate { snapshot: None });
                 }
                 Err(error) => {
                     log::warn!("refresh now playing artwork: {error}");
@@ -261,7 +257,6 @@ fn worker_loop(
                 displayed_snapshot = Some(snapshot.clone());
                 apply_ui_accent(&config, Some(snapshot.accent_hex.clone()));
                 let _ = update_tx.send(NowPlayingUpdate {
-                    source: active_transition.source,
                     snapshot: Some(snapshot.clone()),
                 });
 
@@ -318,7 +313,6 @@ fn settle_snapshot(
     *settled_snapshot = Some(snapshot.clone());
     *displayed_snapshot = Some(snapshot.clone());
     let _ = update_tx.send(NowPlayingUpdate {
-        source,
         snapshot: Some(snapshot),
     });
 }
