@@ -9,7 +9,6 @@ pub struct NoiseGenerator {
 
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
-    scaling_ratio: grid::ScalingRatio,
 
     uniforms: NoiseUniforms,
 
@@ -27,28 +26,6 @@ pub struct NoiseGenerator {
 }
 
 impl NoiseGenerator {
-    pub fn resize(&mut self, device: &wgpu::Device, size: u32, scaling_ratio: grid::ScalingRatio) {
-        if scaling_ratio == self.scaling_ratio {
-            return;
-        }
-
-        let (width, height) = (
-            size * scaling_ratio.rounded_x(),
-            size * scaling_ratio.rounded_y(),
-        );
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        let (texture, texture_view) = create_texture(device, &size);
-
-        self.scaling_ratio = scaling_ratio;
-        self.texture = texture;
-        self.texture_view = texture_view;
-    }
-
     pub fn update(&mut self, new_settings: &settings::Settings) {
         self.uniforms.multiplier = new_settings.noise_multiplier;
         self.channel_settings = new_settings.noise_channels.to_vec();
@@ -114,6 +91,10 @@ impl NoiseGenerator {
     pub fn get_noise_texture_view(&self) -> &wgpu::TextureView {
         &self.texture_view
     }
+
+    pub fn extent(&self) -> wgpu::Extent3d {
+        self.texture.size()
+    }
 }
 
 pub struct NoiseGeneratorBuilder {
@@ -154,16 +135,7 @@ impl NoiseGeneratorBuilder {
             .map(|channel| NoiseChannel::new(self.scaling_ratio, channel))
             .collect::<Vec<_>>();
 
-        let (width, height) = (
-            self.size * self.scaling_ratio.rounded_x(),
-            self.size * self.scaling_ratio.rounded_y(),
-        );
-
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
+        let size = grid::noise_simulation_extent(self.size, self.scaling_ratio);
 
         let (texture, texture_view) = create_texture(device, &size);
 
@@ -439,7 +411,6 @@ impl NoiseGeneratorBuilder {
 
             uniform_buffer,
             channel_buffer,
-            scaling_ratio: self.scaling_ratio,
             texture,
             texture_view,
             bind_group,

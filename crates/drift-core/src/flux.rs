@@ -12,6 +12,7 @@ pub struct Flux {
     settings: Arc<Settings>,
     logical_size: wgpu::Extent3d,
     physical_size: wgpu::Extent3d,
+    surface_format: wgpu::TextureFormat,
 
     grid: grid::Grid,
     fluid: render::fluid::Context,
@@ -31,8 +32,50 @@ pub struct Flux {
 }
 
 impl Flux {
+    fn sync_simulation_gpu_resources(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        settings: &Arc<Settings>,
+    ) {
+        let fluid_ext = grid::fluid_simulation_extent(self.grid.scaling_ratio, settings.fluid_size);
+        let noise_ext =
+            grid::noise_simulation_extent(2 * settings.fluid_size, self.grid.scaling_ratio);
+
+        let rebuild_fluid = fluid_ext != self.fluid.gpu_extent();
+        let rebuild_noise = noise_ext != self.noise_generator.extent();
+
+        if rebuild_fluid {
+            self.fluid = render::fluid::Context::new(device, queue, self.grid.scaling_ratio, settings);
+        }
+        if rebuild_noise {
+            let mut noise_builder = render::noise::NoiseGeneratorBuilder::new(
+                2 * settings.fluid_size,
+                self.grid.scaling_ratio,
+                settings,
+            );
+            for channel in &settings.noise_channels {
+                noise_builder.add_channel(channel);
+            }
+            self.noise_generator = noise_builder.build(device, queue);
+        }
+        if rebuild_fluid || rebuild_noise {
+            self.debug_texture = render::texture::Context::new(
+                device,
+                self.surface_format,
+                &[
+                    ("fluid", self.fluid.get_velocity_texture_view()),
+                    ("noise", self.noise_generator.get_noise_texture_view()),
+                    ("pressure", self.fluid.get_pressure_texture_view()),
+                    ("divergence", self.fluid.get_divergence_texture_view()),
+                ],
+            );
+        }
+    }
+
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, settings: &Arc<Settings>) {
         self.settings = Arc::clone(settings);
+        self.sync_simulation_gpu_resources(device, queue, settings);
         self.fluid
             .update(device, queue, self.grid.scaling_ratio, &self.settings);
         self.noise_generator.update(&self.settings);
@@ -127,6 +170,7 @@ impl Flux {
             settings: Arc::clone(settings),
             logical_size,
             physical_size,
+            surface_format: swapchain_format,
 
             fluid,
             grid,
@@ -172,12 +216,9 @@ impl Flux {
         self.logical_size = logical_size;
         self.physical_size = physical_size;
 
-        // self.fluid.resize(device, self.grid.scaling_ratio);
-        self.noise_generator.resize(
-            device,
-            2 * self.settings.fluid_size,
-            self.grid.scaling_ratio,
-        );
+        let settings = Arc::clone(&self.settings);
+        self.sync_simulation_gpu_resources(device, queue, &settings);
+        self.fluid.update(device, queue, self.grid.scaling_ratio, &settings);
     }
 
     pub fn animate(

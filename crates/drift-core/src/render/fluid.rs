@@ -98,22 +98,10 @@ impl Context {
         scaling_ratio: grid::ScalingRatio,
         settings: &Arc<Settings>,
     ) {
-        let (width, height) = (
-            scaling_ratio.rounded_x() * settings.fluid_size,
-            scaling_ratio.rounded_y() * settings.fluid_size,
-        );
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
+        let size = grid::fluid_simulation_extent(scaling_ratio, settings.fluid_size);
 
-        // Resize the fluid texture if necessary
-        if self.fluid_size_3d != size {
-            self.fluid_size = [width as f32, height as f32];
-            self.fluid_size_3d = size;
-            // self.resize_fluid_texture(width, height).unwrap();
-        }
+        // Simulation extent is owned by GPU textures; `Flux::sync_simulation_gpu_resources`
+        // rebuilds this context when `fluid_simulation_extent` changes.
 
         // Update fluid settings needed on the CPU side
         self.diffusion_iterations = settings.diffusion_iterations;
@@ -135,15 +123,9 @@ impl Context {
         scaling_ratio: grid::ScalingRatio,
         settings: &Arc<Settings>,
     ) -> Self {
-        let (width, height) = (
-            scaling_ratio.rounded_x() * settings.fluid_size,
-            scaling_ratio.rounded_y() * settings.fluid_size,
-        );
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
+        let size = grid::fluid_simulation_extent(scaling_ratio, settings.fluid_size);
+        let width = size.width;
+        let height = size.height;
 
         // Uniforms
 
@@ -925,6 +907,11 @@ impl Context {
             last_pressure_index: Arc::new(Mutex::new(0)),
             last_velocity_index: Arc::new(Mutex::new(0)),
         }
+    }
+
+    /// Width/height of velocity textures (source of truth for GPU allocation).
+    pub fn gpu_extent(&self) -> wgpu::Extent3d {
+        self._velocity_textures[0].size()
     }
 
     fn get_workgroup_size(&self) -> (u32, u32, u32) {

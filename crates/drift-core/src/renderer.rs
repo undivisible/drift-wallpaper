@@ -44,7 +44,7 @@ impl FluxRenderer {
             label: Some("drift-core-device"),
             required_features: features,
             required_limits: limits,
-            memory_hints: wgpu::MemoryHints::Performance,
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
         }))
@@ -58,7 +58,7 @@ impl FluxRenderer {
             width: physical_width.max(1),
             height: physical_height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
             alpha_mode: capabilities.alpha_modes[0],
             view_formats: vec![],
         };

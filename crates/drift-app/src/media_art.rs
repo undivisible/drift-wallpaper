@@ -20,8 +20,10 @@ pub fn resolve_now_playing_snapshot(
     {
         match source {
             NowPlayingSource::Automatic => {
-                if let Some(snapshot) = query_spotify(previous_key)? {
-                    return Ok(Some(snapshot));
+                match query_spotify(previous_key) {
+                    Ok(Some(s)) => return Ok(Some(s)),
+                    Ok(None) => {}
+                    Err(e) => log::debug!("Spotify query failed in automatic mode, trying Music: {e}"),
                 }
                 query_apple_music(previous_key)
             }
@@ -37,14 +39,56 @@ pub fn resolve_now_playing_snapshot(
     }
 }
 
+/// Spotify `osascript` output: track id, title, artist, album line, artwork URL (same layout as
+/// widgets such as [Übersicht spotify-now-playing](https://gist.github.com/L-A/cb687690c9558faf427eba91edf9ca04),
+/// plus stable `id` like [spotify-notifier](https://github.com/ryanmohta/spotify-notifier)).
+#[derive(Debug, Clone, PartialEq)]
+struct SpotifyScriptLines<'a> {
+    track_id: &'a str,
+    title: &'a str,
+    artist: &'a str,
+    album_raw: &'a str,
+    artwork_url: &'a str,
+}
+
+fn parse_spotify_osascript_stdout(stdout: &str) -> Option<SpotifyScriptLines<'_>> {
+    let mut lines = stdout.lines();
+    let track_id = lines.next()?.trim();
+    let title = lines.next()?.trim();
+    let artist = lines.next()?.trim();
+    let album_raw = lines.next().unwrap_or("").trim();
+    let artwork_url = lines.next().unwrap_or("").trim();
+    // Stopped / not running: script returns "" → no lines.
+    if track_id.is_empty() && title.is_empty() {
+        return None;
+    }
+    if title.is_empty() || artist.is_empty() {
+        return None;
+    }
+    Some(SpotifyScriptLines {
+        track_id,
+        title,
+        artist,
+        album_raw,
+        artwork_url,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn query_spotify(previous_key: Option<&str>) -> Result<Option<NowPlayingSnapshot>> {
-    // Do not require `player state is playing` — Spotify often reports track changes while
-    // briefly "paused" during crossfade; the boring.notch-style notification still fires then.
+    // Match common macOS patterns: check Spotify is running before `tell`, don't treat Automation
+    // failures as "no track" (those return `Err` so the worker keeps the last good snapshot).
+    // Use `id of current track` so we detect skips even when artwork URL/title lag (see e.g.
+    // spotify-notifier polling track id).
     let script = r#"
+if application "Spotify" is not running then return ""
 tell application "Spotify"
     try
         if player state is stopped then return ""
+        set tid to ""
+        try
+            set tid to id of current track
+        end try
         set currentTrackName to name of current track
         set currentTrackArtist to artist of current track
         set currentTrackAlbum to album of current track
@@ -53,7 +97,7 @@ tell application "Spotify"
         on error
             set artworkURL to ""
         end try
-        return currentTrackName & linefeed & currentTrackArtist & linefeed & currentTrackAlbum & linefeed & artworkURL
+        return tid & linefeed & currentTrackName & linefeed & currentTrackArtist & linefeed & currentTrackAlbum & linefeed & artworkURL
     on error
         return ""
     end try
@@ -67,29 +111,40 @@ end tell
         .context("run Spotify now playing query")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!(
-            "Spotify osascript exited with {}: {} (grant Automation for Spotify to this app if empty track data)",
+        return Err(anyhow::anyhow!(
+            "Spotify osascript exited with {}: {} — enable Automation for Drift in System Settings → Privacy & Security → Automation (control Spotify)",
             output.status,
             stderr.trim()
-        );
-        return Ok(None);
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut parts = stdout.lines();
-    let title = parts.next().unwrap_or("").trim();
-    let artist = parts.next().unwrap_or("").trim();
-    let album = parts.next().unwrap_or("").trim();
-    let artwork_url = parts.next().unwrap_or("").trim();
-    if title.is_empty() || artist.is_empty() || album.is_empty() {
+    let Some(parsed) = parse_spotify_osascript_stdout(stdout.trim()) else {
         return Ok(None);
-    }
+    };
 
-    let key = format!("spotify::{title}::{artist}::{album}::{artwork_url}");
+    let album = if parsed.album_raw.is_empty() {
+        "Single or unknown album"
+    } else {
+        parsed.album_raw
+    };
+
+    let key = if !parsed.track_id.is_empty() {
+        format!("spotify::{}", parsed.track_id)
+    } else {
+        format!(
+            "spotify::fallback::{}::{}::{}::{}",
+            parsed.title, parsed.artist, album, parsed.artwork_url
+        )
+    };
     let image_path = artwork_cache_path(
         "spotify",
         &key,
-        if artwork_url.is_empty() { "png" } else { "jpg" },
+        if parsed.artwork_url.is_empty() {
+            "png"
+        } else {
+            "jpg"
+        },
     );
     if previous_key == Some(key.as_str()) && image_path.exists() {
         let palette = palette_from_image(&image_path);
@@ -101,8 +156,8 @@ end tell
         }));
     }
 
-    if artwork_url.is_empty() {
-        let palette = palette_from_track_identity(title, artist, album);
+    if parsed.artwork_url.is_empty() {
+        let palette = palette_from_track_identity(parsed.title, parsed.artist, album);
         write_solid_palette_png(&image_path, &palette)?;
         return Ok(Some(NowPlayingSnapshot {
             accent_hex: rgb_to_hex(palette[1]),
@@ -116,13 +171,15 @@ end tell
         .arg("-L")
         .arg("-f")
         .arg("-sS")
-        .arg(artwork_url)
+        .arg("-A")
+        .arg("DriftWallpaper/1.0")
+        .arg(parsed.artwork_url)
         .arg("-o")
         .arg(&image_path)
         .status()
         .context("download Spotify artwork")?;
     if !status.success() {
-        let palette = palette_from_track_identity(title, artist, album);
+        let palette = palette_from_track_identity(parsed.title, parsed.artist, album);
         write_solid_palette_png(&image_path, &palette)?;
         return Ok(Some(NowPlayingSnapshot {
             accent_hex: rgb_to_hex(palette[1]),
@@ -278,4 +335,39 @@ fn rgb_to_hex(rgb: [f32; 3]) -> String {
 
 fn fallback_palette() -> [[f32; 3]; 3] {
     [[0.02, 0.04, 0.18], [0.12, 0.38, 0.72], [0.85, 0.94, 0.98]]
+}
+
+#[cfg(test)]
+mod spotify_parse_tests {
+    use super::parse_spotify_osascript_stdout;
+
+    #[test]
+    fn parse_empty_stdout_is_none() {
+        assert!(parse_spotify_osascript_stdout("").is_none());
+    }
+
+    #[test]
+    fn parse_full_block() {
+        let s = "spotify:track:abc123\nSummer\nArtist Name\nThe Album\nhttps://i.scdn.co/image/x\n";
+        let p = parse_spotify_osascript_stdout(s).expect("parse");
+        assert_eq!(p.track_id, "spotify:track:abc123");
+        assert_eq!(p.title, "Summer");
+        assert_eq!(p.artist, "Artist Name");
+        assert_eq!(p.album_raw, "The Album");
+        assert_eq!(p.artwork_url, "https://i.scdn.co/image/x");
+    }
+
+    #[test]
+    fn parse_missing_album_line() {
+        let s = "id\nT\nA\n";
+        let p = parse_spotify_osascript_stdout(s).expect("parse");
+        assert_eq!(p.album_raw, "");
+        assert_eq!(p.artwork_url, "");
+    }
+
+    #[test]
+    fn parse_rejects_missing_title() {
+        let s = "id\n\nArtist\nAlbum\n";
+        assert!(parse_spotify_osascript_stdout(s).is_none());
+    }
 }

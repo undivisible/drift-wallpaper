@@ -125,6 +125,22 @@ impl TransitionState {
     }
 }
 
+/// Whether the worker should call AppleScript / snapshot resolution again this iteration.
+///
+/// While [`TransitionState`] is active, `settled_snapshot` still points at the *previous* track
+/// until the crossfade completes, but `resolve_now_playing` already returns the *new* track.
+/// That makes `changed` look true on every poll, so we'd restart the transition every
+/// [`TRANSITION_TICK`] and never reach `progress >= 1.0`—the wallpaper would appear stuck.
+/// We skip fetches during a transition unless the merged poll source changed (mode / monitor).
+#[inline]
+fn should_fetch_now_playing_snapshot(
+    tick_due: bool,
+    transitioning: bool,
+    source_changed: bool,
+) -> bool {
+    tick_due && (!transitioning || source_changed)
+}
+
 fn worker_loop(
     config: Arc<Mutex<AppConfig>>,
     refresh_rx: mpsc::Receiver<()>,
@@ -155,7 +171,7 @@ fn worker_loop(
         let current_source = config
             .lock()
             .ok()
-            .and_then(|cfg| cfg.wallpaper_profile().color_mode.now_playing_source());
+            .and_then(|cfg| cfg.now_playing_poll_source());
 
         if current_source != last_source {
             pending_refresh = true;
@@ -174,14 +190,21 @@ fn worker_loop(
             match current_source {
                 // Faster polling when a desktop player is selected — distributed
                 // notifications are best-effort; AppleScript rounds out track changes.
-                Some(NowPlayingSource::Spotify) => Duration::from_millis(900),
+                Some(NowPlayingSource::Spotify) => Duration::from_millis(500),
                 Some(NowPlayingSource::AppleMusic) => Duration::from_secs(3),
                 Some(NowPlayingSource::Automatic) => Duration::from_secs(6),
                 None => Duration::from_secs(30),
             }
         };
 
-        if pending_refresh || last_refresh.elapsed() >= refresh_interval {
+        let tick_due = pending_refresh || last_refresh.elapsed() >= refresh_interval;
+        let source_changed = current_source != last_source;
+        let transitioning = transition.is_some();
+
+        if should_fetch_now_playing_snapshot(tick_due, transitioning, source_changed) {
+            if transitioning && source_changed {
+                transition = None;
+            }
             match resolve_now_playing(&config, current_source, settled_snapshot.as_ref()) {
                 Ok(Some(snapshot)) => {
                     let changed = settled_snapshot
@@ -204,6 +227,8 @@ fn worker_loop(
                                 snapshot,
                             );
                         }
+                    } else if current_source != last_source {
+                        last_source = current_source;
                     }
                 }
                 Ok(None) => {
@@ -212,7 +237,7 @@ fn worker_loop(
                     displayed_snapshot = None;
                     last_source = current_source;
                     last_notification_at = None;
-                    apply_ui_accent(&config, None);
+                    apply_now_playing_ui_derivatives(&config, None);
                     let _ = update_tx.send(NowPlayingUpdate { snapshot: None });
                 }
                 Err(error) => {
@@ -255,7 +280,7 @@ fn worker_loop(
 
                 active_transition.last_step = step;
                 displayed_snapshot = Some(snapshot.clone());
-                apply_ui_accent(&config, Some(snapshot.accent_hex.clone()));
+                apply_now_playing_ui_derivatives(&config, Some(&snapshot));
                 let _ = update_tx.send(NowPlayingUpdate {
                     snapshot: Some(snapshot.clone()),
                 });
@@ -308,7 +333,7 @@ fn settle_snapshot(
     source: Option<NowPlayingSource>,
     snapshot: NowPlayingSnapshot,
 ) {
-    apply_ui_accent(config, Some(snapshot.accent_hex.clone()));
+    apply_now_playing_ui_derivatives(config, Some(&snapshot));
     *last_source = source;
     *settled_snapshot = Some(snapshot.clone());
     *displayed_snapshot = Some(snapshot.clone());
@@ -328,24 +353,30 @@ fn resolve_now_playing(
             previous_snapshot.map(|snapshot| snapshot.key.as_str()),
         ),
         None => {
-            apply_ui_accent(config, None);
+            apply_now_playing_ui_derivatives(config, None);
             Ok(None)
         }
     }
 }
 
-fn apply_ui_accent(config: &Arc<Mutex<AppConfig>>, accent: Option<String>) {
+fn apply_now_playing_ui_derivatives(
+    config: &Arc<Mutex<AppConfig>>,
+    snapshot: Option<&NowPlayingSnapshot>,
+) {
+    let accent = snapshot.map(|s| s.accent_hex.clone());
+    let palette = snapshot.map(|s| s.palette);
     let mut to_save = None;
     if let Ok(mut cfg) = config.lock() {
-        if cfg.now_playing_accent_hex != accent {
+        if cfg.now_playing_accent_hex != accent || cfg.now_playing_palette != palette {
             cfg.now_playing_accent_hex = accent;
+            cfg.now_playing_palette = palette;
             to_save = Some(cfg.clone());
         }
     }
 
     if let Some(cfg) = to_save {
         if let Err(error) = cfg.save() {
-            log::warn!("save now playing accent: {error}");
+            log::warn!("save now playing UI colors: {error}");
         }
     }
 }
@@ -461,4 +492,31 @@ fn rgb_to_hex(rgb: [f32; 3]) -> String {
     let g = (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8;
     let b = (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8;
     format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+#[cfg(test)]
+mod fetch_policy_tests {
+    use super::should_fetch_now_playing_snapshot;
+
+    #[test]
+    fn skips_tick_while_transition_without_source_change() {
+        assert!(!should_fetch_now_playing_snapshot(
+            true, true, false
+        ));
+    }
+
+    #[test]
+    fn allows_tick_when_not_transitioning() {
+        assert!(should_fetch_now_playing_snapshot(true, false, false));
+    }
+
+    #[test]
+    fn allows_tick_during_transition_when_source_changes() {
+        assert!(should_fetch_now_playing_snapshot(true, true, true));
+    }
+
+    #[test]
+    fn no_tick_when_not_due_even_if_transitioning() {
+        assert!(!should_fetch_now_playing_snapshot(false, true, true));
+    }
 }

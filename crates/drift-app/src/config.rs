@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use drift_core::{ColorMode, ColorPreset, Settings};
+use drift_core::{ColorMode, ColorPreset, NowPlayingSource, Settings};
 use serde::{Deserialize, Serialize};
 
 pub const SUPPRESS_MENU_BAR_TRAY_ENV: &str = "DRIFT_SUPPRESS_MENU_BAR_TRAY";
@@ -44,6 +44,8 @@ pub struct DiscoveredMonitor {
 #[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
     pub enabled: bool,
+    /// When set, wallpaper uses roughly half the normal refresh rate and coarser fluid steps.
+    pub battery_saver: bool,
     pub launch_at_login: bool,
     pub monitor_mode: MonitorMode,
     pub wallpaper_layout: WallpaperLayout,
@@ -51,6 +53,8 @@ pub struct AppConfig {
     pub ui_accent_override: Option<String>,
     /// Last accent derived from now-playing artwork (settings UI when user override is unset).
     pub now_playing_accent_hex: Option<String>,
+    /// Last three-stop palette from now-playing artwork (settings palette strip / accent wheel).
+    pub now_playing_palette: Option<[[f32; 3]; 3]>,
     pub shared_profile: Settings,
     pub monitors: BTreeMap<String, MonitorConfig>,
     pub selected_monitor_id: Option<String>,
@@ -60,11 +64,13 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            battery_saver: false,
             launch_at_login: false,
             monitor_mode: MonitorMode::Linked,
             wallpaper_layout: WallpaperLayout::PerMonitor,
             ui_accent_override: None,
             now_playing_accent_hex: None,
+            now_playing_palette: None,
             shared_profile: Settings::default(),
             monitors: BTreeMap::new(),
             selected_monitor_id: None,
@@ -218,6 +224,51 @@ impl AppConfig {
                 .map(|monitor| &monitor.drift_settings)
                 .unwrap_or(&self.shared_profile),
         }
+    }
+
+    /// Which desktop now-playing source the background worker should poll so every display that
+    /// uses album art still updates — not only the monitor selected in settings.
+    pub fn now_playing_poll_source(&self) -> Option<NowPlayingSource> {
+        if self.wallpaper_layout == WallpaperLayout::SpanDisplays && !self.monitors.is_empty() {
+            return self.wallpaper_profile().color_mode.now_playing_source();
+        }
+
+        match self.monitor_mode {
+            MonitorMode::Linked => self.shared_profile.color_mode.now_playing_source(),
+            MonitorMode::Independent => Self::merge_now_playing_sources(
+                self.monitors
+                    .values()
+                    .filter_map(|m| m.drift_settings.color_mode.now_playing_source()),
+            ),
+        }
+    }
+
+    fn merge_now_playing_sources(
+        sources: impl Iterator<Item = NowPlayingSource>,
+    ) -> Option<NowPlayingSource> {
+        let mut has_auto = false;
+        let mut has_spotify = false;
+        let mut has_apple = false;
+        for s in sources {
+            match s {
+                NowPlayingSource::Automatic => has_auto = true,
+                NowPlayingSource::Spotify => has_spotify = true,
+                NowPlayingSource::AppleMusic => has_apple = true,
+            }
+        }
+        if has_auto {
+            return Some(NowPlayingSource::Automatic);
+        }
+        if has_spotify && has_apple {
+            return Some(NowPlayingSource::Automatic);
+        }
+        if has_spotify {
+            return Some(NowPlayingSource::Spotify);
+        }
+        if has_apple {
+            return Some(NowPlayingSource::AppleMusic);
+        }
+        None
     }
 
     pub fn active_profile_mut(&mut self) -> &mut Settings {
@@ -390,5 +441,35 @@ mod tests {
         let legacy = r#"{"enabled":true,"params":{"speed":1.0}}"#;
         let decoded = serde_json::from_str::<AppConfig>(legacy).unwrap();
         assert_eq!(decoded, AppConfig::default());
+    }
+
+    #[test]
+    fn now_playing_poll_source_independent_uses_any_monitor_not_only_selected() {
+        let m1 = MonitorConfig {
+            monitor_id: "a".into(),
+            name_hint: "A".into(),
+            drift_settings: drift_core::Settings {
+                color_mode: ColorMode::NowPlaying(NowPlayingSource::Spotify),
+                ..Default::default()
+            },
+        };
+        let m2 = MonitorConfig {
+            monitor_id: "b".into(),
+            name_hint: "B".into(),
+            drift_settings: drift_core::Settings::default(),
+        };
+        let mut cfg = AppConfig {
+            monitor_mode: MonitorMode::Independent,
+            wallpaper_layout: WallpaperLayout::PerMonitor,
+            selected_monitor_id: Some("b".into()),
+            ..AppConfig::default()
+        };
+        cfg.monitors.insert("a".into(), m1);
+        cfg.monitors.insert("b".into(), m2);
+
+        assert_eq!(
+            cfg.now_playing_poll_source(),
+            Some(NowPlayingSource::Spotify)
+        );
     }
 }

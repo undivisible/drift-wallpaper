@@ -108,8 +108,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         windows: Vec<DisplayWindow>,
         window_signature: Option<WindowSignature>,
         last_config_refresh: Instant,
-        /// Last `wallpaper_profile().color_mode.now_playing_source()` we saw — only this
-        /// drives clearing artwork when the user changes mode; never compare worker metadata.
+        /// Last merged now-playing poll source — clears artwork when any display's mode changes it.
         wallpaper_profile_np_source_seen: Option<drift_core::NowPlayingSource>,
         now_playing_key: Option<String>,
         now_playing_snapshot: Option<media_art::NowPlayingSnapshot>,
@@ -281,23 +280,26 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             }
 
-            let settings = app
-                .config
-                .lock()
-                .map(|cfg| {
-                    if app.wallpaper_mode
+            let (settings, battery_saver) = match app.config.lock() {
+                Ok(cfg) => {
+                    let settings = if app.wallpaper_mode
                         && cfg.wallpaper_layout == WallpaperLayout::SpanDisplays
                         && !cfg.monitors.is_empty()
                     {
                         cfg.wallpaper_profile().clone()
                     } else {
                         cfg.settings_for_monitor(&monitor.id)
-                    }
-                })
-                .unwrap_or_default();
+                    };
+                    (settings, cfg.battery_saver)
+                }
+                Err(_) => (Settings::default(), false),
+            };
 
-            let settings =
-                materialize_runtime_settings(settings, app.now_playing_snapshot.as_ref());
+            let settings = materialize_runtime_settings(
+                settings,
+                app.now_playing_snapshot.as_ref(),
+                battery_saver,
+            );
 
             match create_renderer(Arc::clone(&window), settings.clone()) {
                 Ok(mut renderer) => {
@@ -390,7 +392,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 Err(_) => return,
             };
 
-            let current_np_source = cfg.wallpaper_profile().color_mode.now_playing_source();
+            let current_np_source = cfg.now_playing_poll_source();
 
             while let Ok(update) = self.now_playing_updates_rx.try_recv() {
                 match update.snapshot {
@@ -405,13 +407,20 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             }
 
+            // Only reset in-memory artwork when the *merged* poll source actually changes after we
+            // already had one (e.g. Spotify → Apple Music, or now playing → off). On a cold start
+            // `wallpaper_profile_np_source_seen` is `None` while `current_np_source` is
+            // `Some(...)` — clearing here ran *after* draining the worker channel and discarded
+            // every freshly received snapshot, so the wallpaper never picked up new tracks.
             if self.wallpaper_profile_np_source_seen != current_np_source {
-                self.now_playing_key = None;
-                self.now_playing_snapshot = None;
-                self.wallpaper_profile_np_source_seen = current_np_source;
-                if let Some(controller) = &self.now_playing_controller {
-                    controller.request_refresh();
+                if self.wallpaper_profile_np_source_seen.is_some() {
+                    self.now_playing_key = None;
+                    self.now_playing_snapshot = None;
+                    if let Some(controller) = &self.now_playing_controller {
+                        controller.request_refresh();
+                    }
                 }
+                self.wallpaper_profile_np_source_seen = current_np_source;
             }
 
             sync_windows(self, event_loop);
@@ -427,8 +436,11 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                     cfg.settings_for_monitor(&display.monitor_id)
                 };
 
-                settings =
-                    materialize_runtime_settings(settings, self.now_playing_snapshot.as_ref());
+                settings = materialize_runtime_settings(
+                    settings,
+                    self.now_playing_snapshot.as_ref(),
+                    cfg.battery_saver,
+                );
 
                 let uses_now_playing =
                     display_uses_now_playing_colors(&cfg, &display.monitor_id, self.wallpaper_mode);
@@ -455,7 +467,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 for display in &self.windows {
                     display.window.request_redraw();
                 }
-                let fps = cfg.wallpaper_profile().fluid_frame_rate.clamp(1.0, 240.0);
+                let fps = effective_wallpaper_fps(&cfg);
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_secs_f32(1.0 / fps),
                 ));
@@ -630,6 +642,7 @@ fn display_uses_now_playing_colors(
 fn materialize_runtime_settings(
     mut settings: Settings,
     snapshot: Option<&media_art::NowPlayingSnapshot>,
+    battery_saver: bool,
 ) -> Settings {
     if matches!(settings.color_mode, ColorMode::NowPlaying(_)) {
         if let Some(snapshot) = snapshot {
@@ -639,7 +652,22 @@ fn materialize_runtime_settings(
         }
     }
 
+    if battery_saver {
+        settings.fluid_frame_rate = (settings.fluid_frame_rate * 0.5).max(12.0);
+        settings.fluid_timestep = (settings.fluid_timestep * 2.0).clamp(1.0 / 240.0, 1.0 / 8.0);
+    }
+
     settings
+}
+
+/// Present rate for the wallpaper loop (matches effective settings passed to the renderer).
+fn effective_wallpaper_fps(cfg: &AppConfig) -> f32 {
+    let base = cfg.wallpaper_profile().fluid_frame_rate.clamp(1.0, 240.0);
+    if cfg.battery_saver {
+        (base * 0.5).max(12.0)
+    } else {
+        base
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -824,7 +852,7 @@ mod tests {
             color_mode: ColorMode::NowPlaying(NowPlayingSource::Spotify),
             ..Default::default()
         };
-        let out = materialize_runtime_settings(s, Some(&snap));
+        let out = materialize_runtime_settings(s, Some(&snap), false);
         assert_eq!(out.color_mode, ColorMode::ImageFile(path));
     }
 
@@ -834,15 +862,23 @@ mod tests {
             color_mode: ColorMode::NowPlaying(NowPlayingSource::Automatic),
             ..Default::default()
         };
-        let out = materialize_runtime_settings(s, None);
+        let out = materialize_runtime_settings(s, None, false);
         assert_eq!(out.color_mode, ColorMode::Preset(ColorPreset::Original));
     }
 
     #[test]
     fn materialize_preset_untouched() {
         let s = Settings::default();
-        let out = materialize_runtime_settings(s.clone(), None);
+        let out = materialize_runtime_settings(s.clone(), None, false);
         assert_eq!(out.color_mode, s.color_mode);
+    }
+
+    #[test]
+    fn materialize_battery_saver_reduces_rate() {
+        let s = Settings::default();
+        let out = materialize_runtime_settings(s.clone(), None, true);
+        assert!(out.fluid_frame_rate < s.fluid_frame_rate);
+        assert!(out.fluid_timestep > s.fluid_timestep);
     }
 
     #[test]

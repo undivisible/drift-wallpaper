@@ -39,6 +39,43 @@ pub struct Grid {
     pub basepoints: Vec<f32>,
 }
 
+/// Maximum longest side (in texels) for the Navier–Stokes grid. Without this, tiny
+/// `grid_spacing` on wide displays makes `scaling_ratio` huge and fluid textures
+/// alone can use hundreds of megabytes per wallpaper window.
+const FLUID_SIM_MAX_AXIS: u32 = 512;
+/// Noise field can be denser than velocity; allow a higher cap (still bounded).
+const NOISE_SIM_MAX_AXIS: u32 = 1024;
+
+/// Scales width/height down proportionally when the longest side would exceed `max_axis`.
+pub fn capped_scaled_extent(
+    base: u32,
+    scaling_ratio: ScalingRatio,
+    max_axis: u32,
+) -> wgpu::Extent3d {
+    let mut w = scaling_ratio.rounded_x().saturating_mul(base);
+    let mut h = scaling_ratio.rounded_y().saturating_mul(base);
+    let m = w.max(h);
+    if m > max_axis {
+        let s = max_axis as f32 / m as f32;
+        w = ((w as f32) * s).round().max(32.0) as u32;
+        h = ((h as f32) * s).round().max(32.0) as u32;
+    }
+    wgpu::Extent3d {
+        width: w.max(1),
+        height: h.max(1),
+        depth_or_array_layers: 1,
+    }
+}
+
+pub fn fluid_simulation_extent(scaling_ratio: ScalingRatio, fluid_size: u32) -> wgpu::Extent3d {
+    capped_scaled_extent(fluid_size, scaling_ratio, FLUID_SIM_MAX_AXIS)
+}
+
+/// `base` is the noise builder's size (`2 * fluid_size` in [`crate::flux::Flux`]).
+pub fn noise_simulation_extent(base: u32, scaling_ratio: ScalingRatio) -> wgpu::Extent3d {
+    capped_scaled_extent(base, scaling_ratio, NOISE_SIM_MAX_AXIS)
+}
+
 impl Grid {
     pub fn new(uwidth: u32, uheight: u32, grid_spacing: u32) -> Self {
         let height = uheight as f32;
@@ -151,6 +188,19 @@ mod test {
             clamp_logical_size(logical_size.width, logical_size.height),
             (1440, 900)
         );
+    }
+
+    #[test]
+    fn capped_extent_clamps_pathological_sim_resolution() {
+        let ratio = ScalingRatio::new(3800, 3800);
+        let extent = capped_scaled_extent(128, ratio, 512);
+        assert!(
+            extent.width <= 512 && extent.height <= 512,
+            "expected cap at 512, got {}x{}",
+            extent.width,
+            extent.height
+        );
+        assert_eq!(extent.width.max(extent.height), 512);
     }
 
     #[test]
