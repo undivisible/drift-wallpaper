@@ -33,6 +33,14 @@ struct Uniforms {
     _pad2: f32,
 }
 
+#[inline]
+fn smooth_color_channel(current: &mut f32, target: f32, mix: f32) {
+    *current += (target - *current) * mix;
+    if (*current - target).abs() < 0.0015 {
+        *current = target;
+    }
+}
+
 impl Uniforms {
     fn new(params: &DriftParams, time: f32, width: u32, height: u32) -> Self {
         Self {
@@ -81,7 +89,10 @@ pub struct DriftRenderer {
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     start: Instant,
-    params: DriftParams,
+    /// Colours and timing actually sent to the GPU (smoothly approaches [`Self::target_params`]).
+    display_params: DriftParams,
+    target_params: DriftParams,
+    last_frame: Instant,
 }
 
 impl DriftRenderer {
@@ -229,13 +240,20 @@ impl DriftRenderer {
             bind_group,
             uniform_buffer,
             start: Instant::now(),
-            params,
+            display_params: params.clone(),
+            target_params: params,
+            last_frame: Instant::now(),
         })
     }
 
     /// Update the simulation parameters at runtime (e.g. from the menu bar).
+    ///
+    /// Palette stops ease toward the new colours; speed / scale apply immediately on the GPU.
     pub fn set_params(&mut self, params: DriftParams) {
-        self.params = params;
+        self.display_params.speed = params.speed;
+        self.display_params.scale = params.scale;
+        self.display_params.target_fps = params.target_fps;
+        self.target_params = params;
     }
 
     /// Handle window resize.
@@ -250,10 +268,36 @@ impl DriftRenderer {
 
     /// Render one frame.  Returns `false` if the surface is lost (caller
     /// should recreate the renderer).
-    pub fn render(&self) -> bool {
+    pub fn render(&mut self) -> bool {
+        let now = Instant::now();
+        let raw_dt = (now - self.last_frame).as_secs_f32();
+        self.last_frame = now;
+        let dt = raw_dt.clamp(1.0 / 500.0, 0.25);
+
+        // Exponential blend (Flux-style smooth palette changes, not a hard cut).
+        const LAMBDA: f32 = 9.0;
+        let mix = 1.0 - (-LAMBDA * dt).exp();
+        for i in 0..3 {
+            smooth_color_channel(
+                &mut self.display_params.color_a[i],
+                self.target_params.color_a[i],
+                mix,
+            );
+            smooth_color_channel(
+                &mut self.display_params.color_b[i],
+                self.target_params.color_b[i],
+                mix,
+            );
+            smooth_color_channel(
+                &mut self.display_params.color_c[i],
+                self.target_params.color_c[i],
+                mix,
+            );
+        }
+
         let elapsed = self.start.elapsed().as_secs_f32();
         let uniforms = Uniforms::new(
-            &self.params,
+            &self.display_params,
             elapsed,
             self.surface_config.width,
             self.surface_config.height,
