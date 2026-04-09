@@ -1,0 +1,28 @@
+/target
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- Vendored crepuscularity / GPUI: keep the tree minimal -----------------
+# If you re-copy full upstream Crepuscularity or GPUI, ignore bulky paths so
+# `git add` does not pick them up again.
+
+crepuscularity/examples/
+crepuscularity/docs/
+crepuscularity/docs-site/
+crepuscularity/crates/crepuscularity-web/
+crepuscularity/crates/crepuscularity-webext/
+crepuscularity/crates/crepuscularity-dev/
+crepuscularity/crates/crepuscularity-cli/
+crepuscularity/crates/crepuscularity/
+crepuscularity/vendor/gpui/examples/
+
+crepuscularity/**/node_modules/
+crepuscularity/**/dist/
+crepuscularity/**/.next/
+crepuscularity/**/*.map
+
+# Crepuscularity CLI build artifacts (not source)
+crepuscularity/crepus-*.exe
+crepuscularity/crepus-linux-x86_64

@@ -1,4 +1,45 @@
-# the drift live wallpaper for macos.
-set the drift wallpaper as your macos background. 
+# drift-wallpaper
 
-made from [flux](https://github.com/sandydoo/flux)
+Fluid live wallpaper for macOS, inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
+
+![CI](https://github.com/undivisible/drift-wallpaper/actions/workflows/ci.yml/badge.svg)
+
+## Quick start
+
+```sh
+cargo build --release -p drift-app
+
+# Control panel (GPUI)
+./target/release/drift-wallpaper --settings
+
+# Desktop wallpaper windows
+./target/release/drift-wallpaper --background
+
+# Large movable preview
+./target/release/drift-wallpaper --preview
+```
+
+Run `drift-wallpaper --help` for presets, image sources, and other flags.
+
+Configuration is stored at:
+
+`~/Library/Application Support/drift-wallpaper/config.json`
+
+## Workspace
+
+| Crate | Role |
+|-------|------|
+| `drift-core` | `wgpu` fluid simulation, WGSL shaders, color / presets |
+| `drift-app` | `winit` wallpaper windows, GPUI settings UI, macOS desktop integration |
+
+## Tests & CI
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --all-targets --locked
+```
+
+## License
+
+[MPL-2.0](LICENSE).

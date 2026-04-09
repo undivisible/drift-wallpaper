@@ -1,0 +1,25 @@
+[package]
+name = "drift-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core fluid-simulation renderer for drift-wallpaper-macos"
+
+[dependencies]
+log.workspace = true
+anyhow.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+image.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+approx.workspace = true
+getrandom.workspace = true
+rand.workspace = true
+rand_pcg.workspace = true
+rand_seeder.workspace = true
+rustc-hash.workspace = true
+thiserror.workspace = true
