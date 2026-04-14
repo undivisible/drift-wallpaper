@@ -5,6 +5,10 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  release:
+    types: [published]
+  tag:
+    pattern: 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,7 +26,6 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # wgpu on Linux needs system-level Vulkan / GL headers for linking.
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -74,16 +77,94 @@ jobs:
       - name: Verify cargo install
         run: cargo install --path crates/drift-app --locked --force
 
-      - name: Upload binary artifact
-        if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: drift-wallpaper-${{ runner.os }}
-          path: target/release/drift-wallpaper
+  build-release:
+    name: Build Release (${{ matrix.os }})
+    needs: [lint, test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, macos-15, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Upload binary artifact (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev
+
+      - name: Build release binary
+        run: cargo build --locked --release -p drift-app
+
+      - name: Set artifact name
+        id: artifact
+        run: |
+          OS="${{ runner.os }}"
+          case "$OS" in
+            "macOS") ARTIFACT_NAME="drift-wallpaper-macos" ;;
+            "Ubuntu") ARTIFACT_NAME="drift-wallpaper-linux" ;;
+            "Windows") ARTIFACT_NAME="drift-wallpaper-windows.exe" ;;
+          esac
+          echo "NAME=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "EXT=$([ '$OS' = 'Windows' ] && echo '.exe' || echo '')" >> $GITHUB_OUTPUT
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drift-wallpaper-Windows
-          path: target/release/drift-wallpaper.exe
+          name: ${{ steps.artifact.outputs.NAME }}
+          path: target/release/drift-wallpaper${{ steps.artifact.outputs.EXT }}
+
+  create-release:
+    name: Create Release
+    needs: [build-release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create checksum file
+        run: |
+          cd artifacts
+          for dir in */; do
+            platform="${dir%/}"
+            cd "$platform"
+            if [ -f drift-wallpaper.exe ]; then
+              sha256sum drift-wallpaper.exe > drift-wallpaper.exe.sha256
+            else
+              sha256sum drift-wallpaper* | grep -v '.sha256' > drift-wallpaper.sha256
+            fi
+            cd ..
+          done
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/drift-wallpaper-macos/drift-wallpaper
+            artifacts/drift-wallpaper-macos/drift-wallpaper.sha256
+            artifacts/drift-wallpaper-linux/drift-wallpaper
+            artifacts/drift-wallpaper-linux/drift-wallpaper.sha256
+            artifacts/drift-wallpaper-windows.exe/drift-wallpaper.exe
+            artifacts/drift-wallpaper-windows.exe/drift-wallpaper.exe.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
