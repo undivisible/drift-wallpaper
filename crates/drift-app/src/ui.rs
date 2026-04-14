@@ -11,9 +11,8 @@ use drift_core::settings::{COLOR_SCHEME_PLASMA, COLOR_SCHEME_POOLSIDE};
 use drift_core::{ColorMode, ColorPreset, Mode, NowPlayingSource, PressureMode, Settings};
 use gpui::{
     actions, bounds, div, point, px, rgb, size, App as GpuiApp, AppContext, Application, Context,
-    IntoElement, KeyBinding, MouseUpEvent, ParentElement, PathPromptOptions,
-    Render, Styled, WeakEntity, Window,
-    WindowBounds, WindowOptions,
+    IntoElement, KeyBinding, MouseUpEvent, ParentElement, PathPromptOptions, Render, Styled,
+    WeakEntity, Window, WindowBounds, WindowOptions,
 };
 
 use crate::{
@@ -865,10 +864,7 @@ fn build_settings_context(cfg: &AppConfig, advanced_settings_expanded: bool) -> 
     tctx
 }
 
-fn palette_hexes(
-    settings: &Settings,
-    now_playing_palette: Option<[[f32; 3]; 3]>,
-) -> [String; 3] {
+fn palette_hexes(settings: &Settings, now_playing_palette: Option<[[f32; 3]; 3]>) -> [String; 3] {
     match settings.color_mode {
         ColorMode::Preset(ColorPreset::Original) => [
             "#0a1430".to_string(),

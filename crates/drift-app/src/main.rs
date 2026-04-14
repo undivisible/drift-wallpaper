@@ -308,8 +308,6 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                         && wallpaper_layout == WallpaperLayout::SpanDisplays
                         && i == 0
                     {
-                        // AppKit may resize the window after `setFrame`; sync wgpu to the real
-                        // backing size so the fluid sim covers all displays (not just one).
                         sync_flux_renderer_to_wallpaper_window(window.as_ref(), &mut renderer);
                     }
                     app.windows.push(DisplayWindow {
@@ -694,12 +692,6 @@ fn set_desktop_window_level(window: &winit::window::Window) {
     }
 }
 
-/// Winit’s initial `position` / `inner_size` can disagree with AppKit for secondary displays.
-/// Snap the wallpaper `NSWindow` to the `NSScreen` frame (same approach as `wallpaper.rs`).
-///
-/// If we can’t obtain the `NSScreen` for this monitor we intentionally skip the frame snap
-/// rather than falling back to the main screen — falling back would overlay two windows on the
-/// primary monitor and leave the secondary monitor uncovered.
 #[cfg(target_os = "macos")]
 fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monitor: &MonitorHandle) {
     use objc2_app_kit::{NSScreen, NSView};
@@ -707,7 +699,6 @@ fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monito
     use winit::platform::macos::MonitorHandleExtMacOS;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    // Only snap if we can get the exact NSScreen; otherwise leave winit’s placement in place.
     let maybe_frame: Option<NSRect> = match monitor.ns_screen() {
         Some(ptr) if !ptr.is_null() => Some(unsafe { (*ptr.cast::<NSScreen>()).frame() }),
         _ => {
@@ -735,7 +726,6 @@ fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monito
     }
 }
 
-/// One window spanning all displays: match the union of every `NSScreen.frame` in global coordinates.
 #[cfg(target_os = "macos")]
 fn macos_snap_wallpaper_window_to_union_of_screens(window: &winit::window::Window) {
     use objc2_app_kit::{NSScreen, NSView};
@@ -781,8 +771,6 @@ fn macos_snap_wallpaper_window_to_union_of_screens(window: &winit::window::Windo
             let ns_view = h.ns_view.as_ptr() as *const NSView;
             unsafe {
                 if let Some(ns_window) = (*ns_view).window() {
-                    // `true` asks AppKit to update display wiring promptly (important when
-                    // the window spans multiple `NSScreen`s).
                     ns_window.setFrame_display(union, true);
                     ns_window.orderFrontRegardless();
                 }

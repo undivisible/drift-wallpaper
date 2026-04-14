@@ -46,7 +46,8 @@ impl Flux {
         let rebuild_noise = noise_ext != self.noise_generator.extent();
 
         if rebuild_fluid {
-            self.fluid = render::fluid::Context::new(device, queue, self.grid.scaling_ratio, settings);
+            self.fluid =
+                render::fluid::Context::new(device, queue, self.grid.scaling_ratio, settings);
         }
         if rebuild_noise {
             let mut noise_builder = render::noise::NoiseGeneratorBuilder::new(
@@ -218,7 +219,8 @@ impl Flux {
 
         let settings = Arc::clone(&self.settings);
         self.sync_simulation_gpu_resources(device, queue, &settings);
-        self.fluid.update(device, queue, self.grid.scaling_ratio, &settings);
+        self.fluid
+            .update(device, queue, self.grid.scaling_ratio, &settings);
     }
 
     pub fn animate(

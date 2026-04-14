@@ -23,7 +23,9 @@ pub fn resolve_now_playing_snapshot(
                 match query_spotify(previous_key) {
                     Ok(Some(s)) => return Ok(Some(s)),
                     Ok(None) => {}
-                    Err(e) => log::debug!("Spotify query failed in automatic mode, trying Music: {e}"),
+                    Err(e) => {
+                        log::debug!("Spotify query failed in automatic mode, trying Music: {e}")
+                    }
                 }
                 query_apple_music(previous_key)
             }

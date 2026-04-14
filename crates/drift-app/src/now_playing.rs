@@ -500,9 +500,7 @@ mod fetch_policy_tests {
 
     #[test]
     fn skips_tick_while_transition_without_source_change() {
-        assert!(!should_fetch_now_playing_snapshot(
-            true, true, false
-        ));
+        assert!(!should_fetch_now_playing_snapshot(true, true, false));
     }
 
     #[test]
