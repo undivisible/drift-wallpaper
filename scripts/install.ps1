@@ -7,7 +7,7 @@ if (-not $RepoUrl) {
 
 $Branch = $env:DRIFT_BRANCH
 if (-not $Branch) {
-    $Branch = "main"
+    $Branch = "m"
 }
 
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {

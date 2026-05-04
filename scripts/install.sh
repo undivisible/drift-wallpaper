@@ -14,7 +14,7 @@ USAGE
 }
 
 repo_url="${DRIFT_REPO_URL:-https://github.com/undivisible/drift-wallpaper.git}"
-branch="${DRIFT_BRANCH:-main}"
+branch="${DRIFT_BRANCH:-m}"
 mode="${1:-auto}"
 case "$mode" in
   auto | --homebrew | --source) ;;

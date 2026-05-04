@@ -15,13 +15,13 @@ brew install --HEAD undivisible/tap/drift-wallpaper
 Or run the installer directly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/undivisible/drift-wallpaper/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/undivisible/drift-wallpaper/m/scripts/install.sh | bash
 ```
 
 On Windows, install from source with PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/undivisible/drift-wallpaper/main/scripts/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/undivisible/drift-wallpaper/m/scripts/install.ps1 | iex"
 ```
 
 From a checkout, use the local installer:
