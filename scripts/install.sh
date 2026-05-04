@@ -13,6 +13,8 @@ Default: --homebrew when brew is available, otherwise --source.
 USAGE
 }
 
+repo_url="${DRIFT_REPO_URL:-https://github.com/undivisible/drift-wallpaper.git}"
+branch="${DRIFT_BRANCH:-main}"
 mode="${1:-auto}"
 case "$mode" in
   auto | --homebrew | --source) ;;
@@ -50,12 +52,17 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_dir="${DRIFT_INSTALL_DIR:-$HOME/.local/bin}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." 2>/dev/null && pwd || true)"
 
-cd "$repo_root"
-cargo build --release -p drift-app --locked
-mkdir -p "$install_dir"
-install -m 0755 target/release/drift-wallpaper "$install_dir/drift-wallpaper"
+if [[ -n "$repo_root" && -f "$repo_root/crates/drift-app/Cargo.toml" ]]; then
+  cd "$repo_root"
+  cargo build --release -p drift-app --locked
+  mkdir -p "$install_dir"
+  install -m 0755 target/release/drift-wallpaper "$install_dir/drift-wallpaper"
 
-echo "Installed drift-wallpaper to $install_dir/drift-wallpaper"
+  echo "Installed drift-wallpaper to $install_dir/drift-wallpaper"
+  exit 0
+fi
+
+cargo install --git "$repo_url" --branch "$branch" drift-app --locked --force
