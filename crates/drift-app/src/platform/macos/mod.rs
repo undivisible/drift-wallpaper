@@ -1,18 +1,8 @@
 //! macOS platform implementation.
 
 pub mod wallpaper;
-pub mod tray;
-pub mod color_picker;
-pub mod autostart;
-pub mod media;
-pub mod screensaver;
 
 pub use wallpaper::MacosWallpaperManager;
-pub use tray::MacosSystemTray;
-pub use color_picker::MacosColorPicker;
-pub use autostart::MacosAutostart;
-pub use media::MacosMediaQuerier;
-pub use screensaver::MacosScreensaverRunner;
 
 use crate::platform::{WallpaperManager, WallpaperManagerSync};
 

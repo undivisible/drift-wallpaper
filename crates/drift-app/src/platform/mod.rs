@@ -2,6 +2,7 @@
 //!
 //! This module provides a unified interface for platform-specific functionality
 //! that differs between macOS, Windows, and Linux.
+#![allow(dead_code, unused_imports)]
 
 pub mod traits;
 

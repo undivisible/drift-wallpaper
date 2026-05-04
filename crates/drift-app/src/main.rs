@@ -6,6 +6,7 @@ mod crepus_settings_render;
 mod launch_agent;
 mod media_art;
 mod now_playing;
+mod platform;
 mod ui;
 
 #[cfg(target_os = "macos")]
@@ -26,7 +27,15 @@ use winit::{
 };
 
 use crate::config::{AppConfig, DiscoveredMonitor, MonitorMode, WallpaperLayout};
+use crate::platform::{WallpaperManager, WallpaperManagerSync};
 use drift_core::ColorMode;
+
+#[cfg(target_os = "macos")]
+type PlatformWallpaperManager = crate::platform::macos::MacosWallpaperManager;
+#[cfg(target_os = "windows")]
+type PlatformWallpaperManager = crate::platform::windows::WindowsWallpaperManager;
+#[cfg(target_os = "linux")]
+type PlatformWallpaperManager = crate::platform::linux::LinuxWallpaperManager;
 
 fn init_logging() {
     let mut builder =
@@ -259,25 +268,40 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             };
 
-            #[cfg(target_os = "macos")]
             if app.wallpaper_mode {
-                set_desktop_window_level(window.as_ref());
-                match wallpaper_layout {
+                if let Err(error) =
+                    <PlatformWallpaperManager as WallpaperManager>::set_desktop_level(
+                        window.as_ref(),
+                    )
+                {
+                    log::warn!("set desktop window level: {error}");
+                }
+                let snap_result = match wallpaper_layout {
                     WallpaperLayout::PerMonitor => {
                         if let Some(h) = monitor_handles.get(i) {
-                            macos_snap_wallpaper_window_to_monitor(window.as_ref(), h);
+                            <PlatformWallpaperManager as WallpaperManager>::snap_to_monitor(
+                                window.as_ref(),
+                                h,
+                            )
                         } else {
-                            log::warn!(
+                            Err(anyhow::anyhow!(
                                 "macOS: missing MonitorHandle for wallpaper window index {i} ({})",
                                 monitor.name_hint
-                            );
+                            ))
                         }
                     }
                     WallpaperLayout::SpanDisplays => {
                         if i == 0 {
-                            macos_snap_wallpaper_window_to_union_of_screens(window.as_ref());
+                            <PlatformWallpaperManager as WallpaperManager>::snap_to_all_monitors(
+                                window.as_ref(),
+                            )
+                        } else {
+                            Ok(())
                         }
                     }
+                };
+                if let Err(error) = snap_result {
+                    log::warn!("snap wallpaper window: {error}");
                 }
             }
 
@@ -304,12 +328,19 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
 
             match create_renderer(Arc::clone(&window), settings.clone()) {
                 Ok(mut renderer) => {
-                    #[cfg(target_os = "macos")]
                     if app.wallpaper_mode
                         && wallpaper_layout == WallpaperLayout::SpanDisplays
                         && i == 0
+                        && PlatformWallpaperManager::REQUIRES_SYNC
                     {
-                        sync_flux_renderer_to_wallpaper_window(window.as_ref(), &mut renderer);
+                        if let Err(error) =
+                            <PlatformWallpaperManager as WallpaperManager>::sync_renderer_size(
+                                window.as_ref(),
+                                &mut renderer,
+                            )
+                        {
+                            log::warn!("sync wallpaper renderer size: {error}");
+                        }
                     }
                     app.windows.push(DisplayWindow {
                         id: window.id(),

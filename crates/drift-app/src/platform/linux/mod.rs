@@ -1,18 +1,8 @@
 //! Linux platform implementation.
 
 pub mod wallpaper;
-pub mod tray;
-pub mod color_picker;
-pub mod autostart;
-pub mod media;
-pub mod screensaver;
 
 pub use wallpaper::LinuxWallpaperManager;
-pub use tray::LinuxSystemTray;
-pub use color_picker::LinuxColorPicker;
-pub use autostart::LinuxAutostart;
-pub use media::LinuxMediaQuerier;
-pub use screensaver::LinuxScreensaverRunner;
 
 use crate::platform::{WallpaperManager, WallpaperManagerSync};
 

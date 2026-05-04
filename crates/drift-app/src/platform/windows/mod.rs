@@ -1,18 +1,8 @@
 //! Windows platform implementation.
 
 pub mod wallpaper;
-pub mod tray;
-pub mod color_picker;
-pub mod autostart;
-pub mod media;
-pub mod screensaver;
 
 pub use wallpaper::WindowsWallpaperManager;
-pub use tray::WindowsSystemTray;
-pub use color_picker::WindowsColorPicker;
-pub use autostart::WindowsAutostart;
-pub use media::WindowsMediaQuerier;
-pub use screensaver::WindowsScreensaverRunner;
 
 use crate::platform::{WallpaperManager, WallpaperManagerSync};
 

@@ -1,12 +1,10 @@
 //! Windows wallpaper window implementation.
 //!
-//! Uses Win32 API to create borderless windows at the desktop level
-//! that ignore mouse events.
-
-use winit::monitor::MonitorHandle;
-use winit::window::Window;
+//! Uses Win32 API to create borderless wallpaper windows that stay behind normal app windows.
 
 use drift_core::FluxRenderer;
+use winit::monitor::MonitorHandle;
+use winit::window::Window;
 
 pub struct WindowsWallpaperManager;
 
@@ -17,31 +15,16 @@ impl WindowsWallpaperManager {
         if let Ok(handle) = window.window_handle() {
             if let RawWindowHandle::Win32(h) = handle.as_raw() {
                 unsafe {
+                    use windows::Win32::Foundation::HWND;
                     use windows::Win32::UI::WindowsAndMessaging::*;
 
-                    let hwnd = windows::Win32::HWND(h.hwnd.get() as *mut std::ffi::c_void);
-
-                    let desktop_hwnd = GetDesktopWindow();
-
-                    SetWindowPos(
-                        hwnd,
-                        desktop_hwnd,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                    )?;
-
-                    let style: u32 = GetWindowLongW(hwnd, GWL_EXSTYLE).into();
-                    SetWindowLongW(
+                    let hwnd = HWND(h.hwnd.get() as *mut std::ffi::c_void);
+                    let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+                    let _previous_style = SetWindowLongW(
                         hwnd,
                         GWL_EXSTYLE,
-                        windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(
-                            style | WS_EX_NOACTIVATE.0 as u32 | WS_EX_TOOLWINDOW.0 as u32,
-                        ),
-                    )?;
-
+                        (style | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as i32,
+                    );
                     SetWindowPos(
                         hwnd,
                         HWND_BOTTOM,
@@ -49,10 +32,9 @@ impl WindowsWallpaperManager {
                         0,
                         0,
                         0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                     )?;
-
-                    ShowWindow(hwnd, SW_SHOWNOACTIVATE)?;
+                    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
             }
         }
@@ -68,13 +50,13 @@ impl WindowsWallpaperManager {
         if let Ok(handle) = window.window_handle() {
             if let RawWindowHandle::Win32(h) = handle.as_raw() {
                 unsafe {
+                    use windows::Win32::Foundation::HWND;
                     use windows::Win32::UI::WindowsAndMessaging::*;
 
-                    let hwnd = windows::Win32::HWND(h.hwnd.get() as *mut std::ffi::c_void);
-
+                    let hwnd = HWND(h.hwnd.get() as *mut std::ffi::c_void);
                     SetWindowPos(
                         hwnd,
-                        HWND_TOPMOST,
+                        HWND_BOTTOM,
                         position.x,
                         position.y,
                         size.width as i32,
@@ -93,32 +75,15 @@ impl WindowsWallpaperManager {
         if let Ok(handle) = window.window_handle() {
             if let RawWindowHandle::Win32(h) = handle.as_raw() {
                 unsafe {
-                    use windows::Win32::Graphics::Gdi::*;
+                    use windows::Win32::Foundation::HWND;
                     use windows::Win32::UI::WindowsAndMessaging::*;
 
-                    let hwnd = windows::Win32::HWND(h.hwnd.get() as *mut std::ffi::c_void);
-
-                    let mut min_x = i32::MAX;
-                    let mut min_y = i32::MAX;
-                    let mut max_x = i32::MIN;
-                    let mut max_y = i32::MIN;
-
-                    EnumDisplayMonitors(
-                        HDC::default(),
-                        None,
-                        Some(monitor_enum_callback),
-                        std::ptr::addr_of_mut!(min_x) as isize,
-                    )?;
-
-                    let monitor = window
-                        .primary_monitor()
-                        .ok_or_else(|| anyhow::anyhow!("No primary monitor"))?;
-                    let position = monitor.position();
-                    let size = monitor.size();
-
+                    let hwnd = HWND(h.hwnd.get() as *mut std::ffi::c_void);
+                    let position = window.outer_position().unwrap_or_default();
+                    let size = window.outer_size();
                     SetWindowPos(
                         hwnd,
-                        HWND_TOPMOST,
+                        HWND_BOTTOM,
                         position.x,
                         position.y,
                         size.width as i32,
@@ -142,32 +107,4 @@ impl WindowsWallpaperManager {
         );
         Ok(())
     }
-}
-
-unsafe extern "system" fn monitor_enum_callback(
-    hmonitor: windows::Win32::UI::WindowsAndMessaging::HMONITOR,
-    _hdc: windows::Win32::Graphics::Gdi::HDC,
-    _rect: *mut windows::Win32::Foundation::RECT,
-    lparam: isize,
-) -> windows::Win32::Foundation::BOOL {
-    use windows::Win32::Graphics::Gdi::*;
-    use windows::Win32::UI::WindowsAndMessaging::*;
-
-    let min_x = &mut *(lparam as *mut i32);
-    let min_y = &mut *((lparam + 8) as *mut i32);
-    let max_x = &mut *((lparam + 16) as *mut i32);
-    let max_y = &mut *((lparam + 24) as *mut i32);
-
-    let mut info = MONITORINFOEXW::default();
-    info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-
-    if GetMonitorInfoW(hmonitor, std::mem::cast_mut(&mut info)) {
-        let rect = info.monitorInfo.rcMonitor;
-        *min_x = min_x.min(rect.left);
-        *min_y = min_y.min(rect.top);
-        *max_x = max_x.max(rect.right);
-        *max_y = max_y.max(rect.bottom);
-    }
-
-    BOOL(1)
 }
