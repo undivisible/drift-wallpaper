@@ -6,13 +6,14 @@ mod crepus_settings_render;
 mod launch_agent;
 mod media_art;
 mod now_playing;
+mod platform;
 mod ui;
 
 #[cfg(target_os = "macos")]
 mod menubar;
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use drift_core::{FluxRenderer, Settings};
@@ -26,7 +27,15 @@ use winit::{
 };
 
 use crate::config::{AppConfig, DiscoveredMonitor, MonitorMode, WallpaperLayout};
+use crate::platform::{WallpaperManager, WallpaperManagerSync};
 use drift_core::ColorMode;
+
+#[cfg(target_os = "macos")]
+type PlatformWallpaperManager = crate::platform::macos::MacosWallpaperManager;
+#[cfg(target_os = "windows")]
+type PlatformWallpaperManager = crate::platform::windows::WindowsWallpaperManager;
+#[cfg(target_os = "linux")]
+type PlatformWallpaperManager = crate::platform::linux::LinuxWallpaperManager;
 
 fn init_logging() {
     let mut builder =
@@ -108,6 +117,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         windows: Vec<DisplayWindow>,
         window_signature: Option<WindowSignature>,
         last_config_refresh: Instant,
+        last_config_modified: Option<SystemTime>,
         /// Last merged now-playing poll source — clears artwork when any display's mode changes it.
         wallpaper_profile_np_source_seen: Option<drift_core::NowPlayingSource>,
         now_playing_key: Option<String>,
@@ -258,25 +268,40 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             };
 
-            #[cfg(target_os = "macos")]
             if app.wallpaper_mode {
-                set_desktop_window_level(window.as_ref());
-                match wallpaper_layout {
+                if let Err(error) =
+                    <PlatformWallpaperManager as WallpaperManager>::set_desktop_level(
+                        window.as_ref(),
+                    )
+                {
+                    log::warn!("set desktop window level: {error}");
+                }
+                let snap_result = match wallpaper_layout {
                     WallpaperLayout::PerMonitor => {
                         if let Some(h) = monitor_handles.get(i) {
-                            macos_snap_wallpaper_window_to_monitor(window.as_ref(), h);
+                            <PlatformWallpaperManager as WallpaperManager>::snap_to_monitor(
+                                window.as_ref(),
+                                h,
+                            )
                         } else {
-                            log::warn!(
+                            Err(anyhow::anyhow!(
                                 "macOS: missing MonitorHandle for wallpaper window index {i} ({})",
                                 monitor.name_hint
-                            );
+                            ))
                         }
                     }
                     WallpaperLayout::SpanDisplays => {
                         if i == 0 {
-                            macos_snap_wallpaper_window_to_union_of_screens(window.as_ref());
+                            <PlatformWallpaperManager as WallpaperManager>::snap_to_all_monitors(
+                                window.as_ref(),
+                            )
+                        } else {
+                            Ok(())
                         }
                     }
+                };
+                if let Err(error) = snap_result {
+                    log::warn!("snap wallpaper window: {error}");
                 }
             }
 
@@ -303,14 +328,19 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
 
             match create_renderer(Arc::clone(&window), settings.clone()) {
                 Ok(mut renderer) => {
-                    #[cfg(target_os = "macos")]
                     if app.wallpaper_mode
                         && wallpaper_layout == WallpaperLayout::SpanDisplays
                         && i == 0
+                        && PlatformWallpaperManager::REQUIRES_SYNC
                     {
-                        // AppKit may resize the window after `setFrame`; sync wgpu to the real
-                        // backing size so the fluid sim covers all displays (not just one).
-                        sync_flux_renderer_to_wallpaper_window(window.as_ref(), &mut renderer);
+                        if let Err(error) =
+                            <PlatformWallpaperManager as WallpaperManager>::sync_renderer_size(
+                                window.as_ref(),
+                                &mut renderer,
+                            )
+                        {
+                            log::warn!("sync wallpaper renderer size: {error}");
+                        }
                     }
                     app.windows.push(DisplayWindow {
                         id: window.id(),
@@ -378,10 +408,16 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
             // Refresh config from disk at most every 500 ms.
             if self.last_config_refresh.elapsed() >= Duration::from_millis(500) {
-                if let Ok(latest) = AppConfig::try_load() {
-                    if let Ok(mut current) = self.config.lock() {
-                        *current = latest;
+                let modified = std::fs::metadata(AppConfig::config_path())
+                    .and_then(|meta| meta.modified())
+                    .ok();
+                if modified != self.last_config_modified {
+                    if let Ok(latest) = AppConfig::try_load() {
+                        if let Ok(mut current) = self.config.lock() {
+                            *current = latest;
+                        }
                     }
+                    self.last_config_modified = modified;
                 }
                 self.last_config_refresh = Instant::now();
             }
@@ -486,6 +522,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         windows: Vec::new(),
         window_signature: None,
         last_config_refresh: Instant::now(),
+        last_config_modified: None,
         now_playing_key: None,
         wallpaper_profile_np_source_seen: None,
         now_playing_snapshot: None,
@@ -694,12 +731,6 @@ fn set_desktop_window_level(window: &winit::window::Window) {
     }
 }
 
-/// Winit’s initial `position` / `inner_size` can disagree with AppKit for secondary displays.
-/// Snap the wallpaper `NSWindow` to the `NSScreen` frame (same approach as `wallpaper.rs`).
-///
-/// If we can’t obtain the `NSScreen` for this monitor we intentionally skip the frame snap
-/// rather than falling back to the main screen — falling back would overlay two windows on the
-/// primary monitor and leave the secondary monitor uncovered.
 #[cfg(target_os = "macos")]
 fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monitor: &MonitorHandle) {
     use objc2_app_kit::{NSScreen, NSView};
@@ -707,7 +738,6 @@ fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monito
     use winit::platform::macos::MonitorHandleExtMacOS;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    // Only snap if we can get the exact NSScreen; otherwise leave winit’s placement in place.
     let maybe_frame: Option<NSRect> = match monitor.ns_screen() {
         Some(ptr) if !ptr.is_null() => Some(unsafe { (*ptr.cast::<NSScreen>()).frame() }),
         _ => {
@@ -735,7 +765,6 @@ fn macos_snap_wallpaper_window_to_monitor(window: &winit::window::Window, monito
     }
 }
 
-/// One window spanning all displays: match the union of every `NSScreen.frame` in global coordinates.
 #[cfg(target_os = "macos")]
 fn macos_snap_wallpaper_window_to_union_of_screens(window: &winit::window::Window) {
     use objc2_app_kit::{NSScreen, NSView};
@@ -781,8 +810,6 @@ fn macos_snap_wallpaper_window_to_union_of_screens(window: &winit::window::Windo
             let ns_view = h.ns_view.as_ptr() as *const NSView;
             unsafe {
                 if let Some(ns_window) = (*ns_view).window() {
-                    // `true` asks AppKit to update display wiring promptly (important when
-                    // the window spans multiple `NSScreen`s).
                     ns_window.setFrame_display(union, true);
                     ns_window.orderFrontRegardless();
                 }

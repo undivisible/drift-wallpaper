@@ -1,5 +1,7 @@
-//! Bridges `.crepus` `@mouseup` attributes to GPUI entities (vendored; upstream
-//! `crepuscularity-runtime` 0.3 on crates.io dropped the interactive renderer).
+//! Bridges `.crepus` `@mouseup` attributes to GPUI entities.
+//!
+//! We still use `crepuscularity-runtime` from crates.io. This module only restores the
+//! app-specific interactive dispatch glue that is no longer exposed by runtime 0.3.
 
 use gpui::{Context, MouseUpEvent, Window};
 

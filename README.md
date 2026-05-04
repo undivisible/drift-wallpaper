@@ -1,10 +1,36 @@
 # drift-wallpaper
 
-Fluid live wallpaper for macOS, inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
+Fluid live wallpaper for macOS, Windows, and Linux, inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
 
 ![CI](https://github.com/undivisible/drift-wallpaper/actions/workflows/ci.yml/badge.svg)
 
 ## Quick start
+
+Install the latest development build from the Homebrew tap:
+
+```sh
+brew install --HEAD undivisible/tap/drift-wallpaper
+```
+
+Or run the installer directly:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/undivisible/drift-wallpaper/main/scripts/install.sh | bash
+```
+
+On Windows, install from source with PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/undivisible/drift-wallpaper/main/scripts/install.ps1 | iex"
+```
+
+From a checkout, use the local installer:
+
+```sh
+./scripts/install.sh
+```
+
+Build from source manually:
 
 ```sh
 cargo build --release -p drift-app
@@ -21,7 +47,7 @@ cargo build --release -p drift-app
 
 Run `drift-wallpaper --help` for presets, image sources, and other flags.
 
-Configuration is stored at:
+On macOS, configuration is stored at:
 
 `~/Library/Application Support/drift-wallpaper/config.json`
 
