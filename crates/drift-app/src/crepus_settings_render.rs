@@ -1,7 +1,6 @@
 //! Interactive GPUI renderer for settings `.crepus` (based on pre-0.3 `crepuscularity-runtime`).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crepuscularity_runtime::ast::*;
@@ -14,8 +13,6 @@ use gpui::{
 };
 
 use crate::crepus_interactive::{normalize_action_handler, CrepusMouseDispatch};
-
-static SCROLL_OVERFLOW_ID: AtomicU64 = AtomicU64::new(0);
 
 fn read_crepus_source(ctx: &TemplateContext, path: &PathBuf) -> Result<String, String> {
     if let Some(base) = ctx.base_dir.as_deref() {
@@ -137,25 +134,30 @@ fn attach_interactive_handlers<T: CrepusMouseDispatch + 'static>(
 fn is_overflow_scroll_class(c: &str) -> bool {
     matches!(
         c,
-        "overflow-scroll"
-            | "overflow-auto"
-            | "overflow-y-scroll"
-            | "overflow-y-auto"
-            | "overflow-x-scroll"
-            | "overflow-x-auto"
+        "overflow-scroll" | "overflow-y-scroll" | "overflow-x-scroll"
     )
+}
+
+fn is_overflow_auto_class(c: &str) -> bool {
+    matches!(c, "overflow-auto" | "overflow-y-auto" | "overflow-x-auto")
 }
 
 fn scroll_axes(el: &Element, ctx: &TemplateContext) -> Option<(bool, bool)> {
     let mut ox = false;
     let mut oy = false;
     let mut note = |c: &str| match c {
-        "overflow-scroll" | "overflow-auto" => {
+        "overflow-scroll" => {
             ox = true;
             oy = true;
         }
-        "overflow-y-scroll" | "overflow-y-auto" => oy = true,
-        "overflow-x-scroll" | "overflow-x-auto" => ox = true,
+        "overflow-y-scroll" => oy = true,
+        "overflow-x-scroll" => ox = true,
+        "overflow-auto" => {
+            ox = true;
+            oy = true;
+        }
+        "overflow-y-auto" => oy = true,
+        "overflow-x-auto" => ox = true,
         _ => {}
     };
     for c in &el.classes {
@@ -173,11 +175,18 @@ fn scroll_axes(el: &Element, ctx: &TemplateContext) -> Option<(bool, bool)> {
     }
 }
 
-fn wrap_overflow_on_div(d: gpui::Div, ox: bool, oy: bool) -> gpui::Stateful<gpui::Div> {
-    let n = SCROLL_OVERFLOW_ID.fetch_add(1, Ordering::Relaxed);
-    let mut s = d.id(ElementId::Name(SharedString::from(format!(
-        "crepus-scroll-{n}"
-    ))));
+fn scroll_element_id(el: &Element) -> ElementId {
+    let name = el.id.as_deref().unwrap_or("crepus-scroll");
+    ElementId::Name(SharedString::from(name.to_string()))
+}
+
+fn wrap_overflow_on_div(
+    d: gpui::Div,
+    id: ElementId,
+    ox: bool,
+    oy: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let mut s = d.id(id);
     if ox {
         s = s.overflow_x_scroll();
     }
@@ -202,8 +211,12 @@ fn render_element<T: CrepusMouseDispatch + 'static>(
 
     let mut d = base_tag_element(&el.tag);
 
+    let mut has_overflow_auto = false;
     for class in &el.classes {
-        if is_overflow_scroll_class(class) {
+        if is_overflow_scroll_class(class) || is_overflow_auto_class(class) {
+            if is_overflow_auto_class(class) {
+                has_overflow_auto = true;
+            }
             continue;
         }
         d = apply_class_with_ctx(d, class, Some(ctx));
@@ -211,11 +224,18 @@ fn render_element<T: CrepusMouseDispatch + 'static>(
 
     for cc in &el.conditional_classes {
         if ctx.eval_condition(&cc.condition) {
-            if is_overflow_scroll_class(&cc.class) {
+            if is_overflow_scroll_class(&cc.class) || is_overflow_auto_class(&cc.class) {
+                if is_overflow_auto_class(&cc.class) {
+                    has_overflow_auto = true;
+                }
                 continue;
             }
             d = apply_class_with_ctx(d, &cc.class, Some(ctx));
         }
+    }
+
+    if has_overflow_auto {
+        d = d.overflow_hidden();
     }
 
     for child in &el.children {
@@ -229,7 +249,9 @@ fn render_element<T: CrepusMouseDispatch + 'static>(
         let d = attach_interactive_handlers(d, &el.event_handlers, ix);
         return match axes {
             None => render_with_animations(d, &el.animations, &el.tag),
-            Some((ox, oy)) => wrap_overflow_on_div(d, ox, oy).into_any_element(),
+            Some((ox, oy)) => {
+                wrap_overflow_on_div(d, scroll_element_id(el), ox, oy).into_any_element()
+            }
         };
     }
 
@@ -240,7 +262,7 @@ fn render_element<T: CrepusMouseDispatch + 'static>(
         }
         Some((ox, oy)) => {
             let d = attach_interactive_handlers(d, &el.event_handlers, ix);
-            wrap_overflow_on_div(d, ox, oy).into_any_element()
+            wrap_overflow_on_div(d, scroll_element_id(el), ox, oy).into_any_element()
         }
     }
 }

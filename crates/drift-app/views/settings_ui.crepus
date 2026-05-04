@@ -10,7 +10,7 @@ div rounded-lg border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3
   slot
 
 --- SettingsRoot
-div w-full flex-1 min-h-0 flex flex-col bg-zinc-950 text-zinc-100 text-sm
+div w-full h-full flex-1 flex flex-col bg-zinc-950 text-zinc-100 text-sm
   div shrink-0 flex items-center justify-between gap-4 px-4 py-3 border-b border-zinc-800 bg-zinc-950/95
     div window-control-area="drag" cursor-move flex flex-col gap-1 min-w-0 flex-1
       div text-lg font-semibold tracking-tight
@@ -19,7 +19,7 @@ div w-full flex-1 min-h-0 flex flex-col bg-zinc-950 text-zinc-100 text-sm
     div px-2 py-1 rounded-md text-zinc-400 cursor-pointer hover:text-zinc-200 @mouseup=close_window
       "Close"
 
-  div flex-1 min-h-0 min-w-0 overflow-y-auto px-4 py-4 flex flex-col gap-4 max-w-[36rem] self-center w-full
+  div #settings-scroll flex-1 min-h-0 w-full overflow-y-scroll px-4 py-4 flex flex-col gap-4 max-w-[36rem] self-center
 
     include settings_ui.crepus#Card title="Session"
       div flex flex-col gap-3
@@ -118,7 +118,7 @@ div w-full flex-1 min-h-0 flex flex-col bg-zinc-950 text-zinc-100 text-sm
         if {color_source_is_image}
           div text-xs text-zinc-500
             {color_source_detail}
-        div flex flex-row flex-nowrap gap-2 overflow-x-auto
+        div #palette-scroll flex flex-row flex-nowrap gap-2 overflow-x-auto
           if {palette_swatch_0_selected}
             div w-10 h-10 shrink-0 rounded-md border-2 border-white bg-{palette_swatch_0_value} cursor-pointer @mouseup={palette_swatch_0_action}
           else

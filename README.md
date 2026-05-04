@@ -6,6 +6,20 @@ Fluid live wallpaper for macOS, inspired by [sandydoo/flux](https://github.com/s
 
 ## Quick start
 
+Install latest development build from the Homebrew tap:
+
+```sh
+brew install --HEAD undivisible/tap/drift-wallpaper
+```
+
+Or use the installer script:
+
+```sh
+./scripts/install.sh
+```
+
+Build from source manually:
+
 ```sh
 cargo build --release -p drift-app
 
