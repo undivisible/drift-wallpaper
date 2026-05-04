@@ -11,30 +11,45 @@ pub struct LinuxWallpaperManager;
 
 impl LinuxWallpaperManager {
     pub fn set_desktop_level(window: &Window) -> anyhow::Result<()> {
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use std::ffi::c_uint;
+        use winit::raw_window_handle::{
+            HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+        };
 
-        if let Ok(handle) = window.window_handle() {
-            if let RawWindowHandle::Xlib(h) = handle.as_raw() {
+        if let (Ok(display_handle), Ok(window_handle)) =
+            (window.display_handle(), window.window_handle())
+        {
+            if let (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) =
+                (display_handle.as_raw(), window_handle.as_raw())
+            {
                 unsafe {
                     use x11::xlib::*;
 
-                    let display = h.display as *mut Display;
-                    let window = xlib::Window::from(h.window as *mut std::ffi::c_void);
+                    let Some(display) = display_handle.display else {
+                        return Ok(());
+                    };
+                    let display = display.as_ptr() as *mut Display;
+                    let xwindow = window_handle.window;
 
-                    if display.is_null() || window == 0 {
+                    if display.is_null() || xwindow == 0 {
                         return Ok(());
                     }
 
                     let root = XDefaultRootWindow(display);
-                    XReparentWindow(display, window, root, 0, 0);
+                    XReparentWindow(display, xwindow, root, 0, 0);
 
                     let mut attributes: XSetWindowAttributes = std::mem::zeroed();
                     attributes.event_mask = ExposureMask | StructureNotifyMask;
-                    attributes.cursor = None;
+                    attributes.cursor = 0;
 
-                    XChangeWindowAttributes(display, window, CWEventMask | CWCursor, &attributes);
+                    XChangeWindowAttributes(
+                        display,
+                        xwindow,
+                        (CWEventMask | CWCursor) as c_uint as _,
+                        &mut attributes,
+                    );
 
-                    XLowerWindow(display, window);
+                    XLowerWindow(display, xwindow);
                     XFlush(display);
                 }
             }
@@ -43,28 +58,37 @@ impl LinuxWallpaperManager {
     }
 
     pub fn snap_to_monitor(window: &Window, monitor: &MonitorHandle) -> anyhow::Result<()> {
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use winit::raw_window_handle::{
+            HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+        };
 
         let position = monitor.position();
         let size = monitor.size();
 
-        if let Ok(handle) = window.window_handle() {
-            if let RawWindowHandle::Xlib(h) = handle.as_raw() {
+        if let (Ok(display_handle), Ok(window_handle)) =
+            (window.display_handle(), window.window_handle())
+        {
+            if let (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) =
+                (display_handle.as_raw(), window_handle.as_raw())
+            {
                 unsafe {
                     use x11::xlib::*;
 
-                    let display = h.display as *mut Display;
-                    let window = xlib::Window::from(h.window as *mut std::ffi::c_void);
+                    let Some(display) = display_handle.display else {
+                        return Ok(());
+                    };
+                    let display = display.as_ptr() as *mut Display;
+                    let xwindow = window_handle.window;
 
-                    if display.is_null() || window == 0 {
+                    if display.is_null() || xwindow == 0 {
                         return Ok(());
                     }
 
                     let root = XDefaultRootWindow(display);
 
-                    XReparentWindow(display, window, root, position.x, position.y);
-                    XResizeWindow(display, window, size.width, size.height);
-                    XLowerWindow(display, window);
+                    XReparentWindow(display, xwindow, root, position.x, position.y);
+                    XResizeWindow(display, xwindow, size.width, size.height);
+                    XLowerWindow(display, xwindow);
                     XFlush(display);
                 }
             }
@@ -73,18 +97,28 @@ impl LinuxWallpaperManager {
     }
 
     pub fn snap_to_all_monitors(window: &Window) -> anyhow::Result<()> {
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use std::ffi::c_uint;
+        use winit::raw_window_handle::{
+            HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+        };
 
-        if let Ok(handle) = window.window_handle() {
-            if let RawWindowHandle::Xlib(h) = handle.as_raw() {
+        if let (Ok(display_handle), Ok(window_handle)) =
+            (window.display_handle(), window.window_handle())
+        {
+            if let (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) =
+                (display_handle.as_raw(), window_handle.as_raw())
+            {
                 unsafe {
                     use x11::xlib::*;
                     use x11::xrandr::*;
 
-                    let display = h.display as *mut Display;
-                    let window = xlib::Window::from(h.window as *mut std::ffi::c_void);
+                    let Some(display) = display_handle.display else {
+                        return Ok(());
+                    };
+                    let display = display.as_ptr() as *mut Display;
+                    let xwindow = window_handle.window;
 
-                    if display.is_null() || window == 0 {
+                    if display.is_null() || xwindow == 0 {
                         return Ok(());
                     }
 
@@ -103,7 +137,7 @@ impl LinuxWallpaperManager {
 
                         XMoveResizeWindow(
                             display,
-                            window,
+                            xwindow,
                             position.x,
                             position.y,
                             size.width,
@@ -127,11 +161,11 @@ impl LinuxWallpaperManager {
                         if !info.is_null() && (*info).crtc != 0 {
                             let crtc = XRRGetCrtcInfo(display, resources, (*info).crtc);
                             if !crtc.is_null() {
-                                let rect = (*crtc);
+                                let rect = *crtc;
                                 min_x = min_x.min(rect.x as i32);
                                 min_y = min_y.min(rect.y as i32);
-                                max_x = max_x.max((rect.x + rect.width) as i32);
-                                max_y = max_y.max((rect.y + rect.height) as i32);
+                                max_x = max_x.max(rect.x.saturating_add(rect.width as i32));
+                                max_y = max_y.max(rect.y.saturating_add(rect.height as i32));
                                 XRRFreeCrtcInfo(crtc);
                             }
                             XRRFreeOutputInfo(info);
@@ -144,9 +178,9 @@ impl LinuxWallpaperManager {
                         let width = (max_x - min_x) as c_uint;
                         let height = (max_y - min_y) as c_uint;
 
-                        XReparentWindow(display, window, root, min_x, min_y);
-                        XResizeWindow(display, window, width, height);
-                        XLowerWindow(display, window);
+                        XReparentWindow(display, xwindow, root, min_x, min_y);
+                        XResizeWindow(display, xwindow, width, height);
+                        XLowerWindow(display, xwindow);
                     }
 
                     XFlush(display);

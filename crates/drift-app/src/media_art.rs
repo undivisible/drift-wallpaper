@@ -1,8 +1,15 @@
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
-use anyhow::{Context, Result};
-use drift_core::{ColorPalette, NowPlayingSource};
+#[cfg(target_os = "macos")]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(target_os = "macos")]
+use drift_core::ColorPalette;
+use drift_core::NowPlayingSource;
 
 #[derive(Debug, Clone)]
 pub struct NowPlayingSnapshot {
@@ -310,6 +317,7 @@ return currentTrackName & linefeed & currentTrackArtist & linefeed & currentTrac
     }))
 }
 
+#[cfg(target_os = "macos")]
 fn artwork_cache_path(prefix: &str, key: &str, extension: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
 
@@ -321,6 +329,7 @@ fn artwork_cache_path(prefix: &str, key: &str, extension: &str) -> PathBuf {
     ))
 }
 
+#[cfg(target_os = "macos")]
 fn palette_from_image(path: &PathBuf) -> [[f32; 3]; 3] {
     image::open(path)
         .ok()
@@ -328,6 +337,7 @@ fn palette_from_image(path: &PathBuf) -> [[f32; 3]; 3] {
         .unwrap_or_else(fallback_palette)
 }
 
+#[cfg(target_os = "macos")]
 fn rgb_to_hex(rgb: [f32; 3]) -> String {
     let r = (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8;
     let g = (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -335,6 +345,7 @@ fn rgb_to_hex(rgb: [f32; 3]) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
+#[cfg(target_os = "macos")]
 fn fallback_palette() -> [[f32; 3]; 3] {
     [[0.02, 0.04, 0.18], [0.12, 0.38, 0.72], [0.85, 0.94, 0.98]]
 }
