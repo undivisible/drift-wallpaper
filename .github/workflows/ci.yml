@@ -3,12 +3,8 @@ name: CI
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
-    branches: ["**"]
-  release:
-    types: [published]
-  tag:
-    pattern: 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -108,15 +104,21 @@ jobs:
 
       - name: Set artifact name
         id: artifact
+        shell: bash
         run: |
           OS="${{ runner.os }}"
+          MATRIX_OS="${{ matrix.os }}"
           case "$OS" in
-            "macOS") ARTIFACT_NAME="drift-wallpaper-macos" ;;
+            "macOS") ARTIFACT_NAME="drift-wallpaper-${MATRIX_OS}" ;;
             "Ubuntu") ARTIFACT_NAME="drift-wallpaper-linux" ;;
             "Windows") ARTIFACT_NAME="drift-wallpaper-windows.exe" ;;
           esac
           echo "NAME=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
-          echo "EXT=$([ '$OS' = 'Windows' ] && echo '.exe' || echo '')" >> $GITHUB_OUTPUT
+          if [ "$OS" = "Windows" ]; then
+            echo "EXT=.exe" >> $GITHUB_OUTPUT
+          else
+            echo "EXT=" >> $GITHUB_OUTPUT
+          fi
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -160,8 +162,10 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            artifacts/drift-wallpaper-macos/drift-wallpaper
-            artifacts/drift-wallpaper-macos/drift-wallpaper.sha256
+            artifacts/drift-wallpaper-macos-14/drift-wallpaper
+            artifacts/drift-wallpaper-macos-14/drift-wallpaper.sha256
+            artifacts/drift-wallpaper-macos-15/drift-wallpaper
+            artifacts/drift-wallpaper-macos-15/drift-wallpaper.sha256
             artifacts/drift-wallpaper-linux/drift-wallpaper
             artifacts/drift-wallpaper-linux/drift-wallpaper.sha256
             artifacts/drift-wallpaper-windows.exe/drift-wallpaper.exe
