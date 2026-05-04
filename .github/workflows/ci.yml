@@ -110,7 +110,7 @@ jobs:
           MATRIX_OS="${{ matrix.os }}"
           case "$OS" in
             "macOS") ARTIFACT_NAME="drift-wallpaper-${MATRIX_OS}" ;;
-            "Ubuntu") ARTIFACT_NAME="drift-wallpaper-linux" ;;
+            "Linux") ARTIFACT_NAME="drift-wallpaper-linux" ;;
             "Windows") ARTIFACT_NAME="drift-wallpaper-windows.exe" ;;
           esac
           echo "NAME=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
