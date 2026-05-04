@@ -2,6 +2,7 @@ use crate::grid;
 use crate::settings::{self, Settings};
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
@@ -45,6 +46,11 @@ impl FluidUniforms {
     }
 }
 
+struct PressureClearCache {
+    value: f32,
+    values: Vec<f32>,
+}
+
 pub struct Context {
     fluid_size: [f32; 2],
     fluid_size_3d: wgpu::Extent3d,
@@ -52,6 +58,7 @@ pub struct Context {
     diffusion_iterations: u32,
     pressure_mode: settings::PressureMode,
     pressure_iterations: u32,
+    pressure_clear_cache: RefCell<PressureClearCache>,
 
     fluid_uniforms: FluidUniforms,
     fluid_uniform_buffer: wgpu::Buffer,
@@ -870,6 +877,10 @@ impl Context {
             diffusion_iterations: settings.diffusion_iterations,
             pressure_mode: settings.pressure_mode,
             pressure_iterations: settings.pressure_iterations,
+            pressure_clear_cache: RefCell::new(PressureClearCache {
+                value: 0.0,
+                values: vec![0.0; (width * height) as usize],
+            }),
 
             fluid_uniforms,
             fluid_uniform_buffer,
@@ -989,6 +1000,12 @@ impl Context {
 
     pub fn clear_pressure(&self, queue: &wgpu::Queue, pressure: f32) {
         let (width, height) = (self.fluid_size[0] as u32, self.fluid_size[1] as u32);
+        let mut cache = self.pressure_clear_cache.borrow_mut();
+        if cache.value != pressure {
+            cache.values.fill(pressure);
+            cache.value = pressure;
+        }
+        let pressure_bytes = bytemuck::cast_slice(&cache.values);
 
         for pressure_texture in self.pressure_textures.iter() {
             queue.write_texture(
@@ -998,7 +1015,7 @@ impl Context {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                bytemuck::cast_slice(&vec![pressure; (width * height) as usize]),
+                pressure_bytes,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * width),

@@ -80,6 +80,12 @@ struct DriftUi {
     config: Arc<Mutex<AppConfig>>,
     config_refresh_started: bool,
     advanced_settings_expanded: bool,
+    settings_template_cache: Option<SettingsTemplateCache>,
+}
+
+struct SettingsTemplateCache {
+    modified: Option<SystemTime>,
+    component_file: ComponentFile,
 }
 
 impl DriftUi {
@@ -88,11 +94,39 @@ impl DriftUi {
             config,
             config_refresh_started: false,
             advanced_settings_expanded: false,
+            settings_template_cache: None,
         }
     }
 
     fn read_config(&self) -> AppConfig {
         self.config.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    fn settings_component_file(&mut self) -> Result<&ComponentFile, String> {
+        let template_path = settings_template_path();
+        let modified = std::fs::metadata(&template_path)
+            .and_then(|meta| meta.modified())
+            .ok();
+
+        let stale = self
+            .settings_template_cache
+            .as_ref()
+            .is_none_or(|cache| cache.modified != modified);
+
+        if stale {
+            let source = std::fs::read_to_string(&template_path)
+                .map_err(|error| format!("Failed to read {template_path:?}: {error}"))?;
+            let component_file = parse_component_file(&source)?;
+            self.settings_template_cache = Some(SettingsTemplateCache {
+                modified,
+                component_file,
+            });
+        }
+
+        self.settings_template_cache
+            .as_ref()
+            .map(|cache| &cache.component_file)
+            .ok_or_else(|| "Settings template cache is empty".to_string())
     }
 
     fn save_config(&self, cfg: &AppConfig) -> Result<()> {
@@ -595,24 +629,8 @@ impl Render for DriftUi {
         }
 
         let cfg = self.read_config();
-        let template_path = settings_template_path();
-        let source = match std::fs::read_to_string(&template_path) {
-            Ok(source) => source,
-            Err(error) => {
-                return div()
-                    .w_full()
-                    .h_full()
-                    .p(px(16.))
-                    .text_color(rgb(0xf87171))
-                    .child(format!(
-                        "Settings template error:\nFailed to read {:?}: {error}",
-                        template_path
-                    ))
-                    .into_any_element();
-            }
-        };
-
-        let component_file: ComponentFile = match parse_component_file(&source) {
+        let advanced_settings_expanded = self.advanced_settings_expanded;
+        let component_file = match self.settings_component_file() {
             Ok(file) => file,
             Err(error) => {
                 return div()
@@ -635,7 +653,7 @@ impl Render for DriftUi {
                 .into_any_element();
         };
 
-        let tctx = build_settings_context(&cfg, self.advanced_settings_expanded);
+        let tctx = build_settings_context(&cfg, advanced_settings_expanded);
         let body = render_nodes_interactive(&root.nodes, &tctx, cx);
         let viewport_h = window.bounds().size.height;
         // Flex + overflow boundary so the inner `overflow-y-scroll` region gets a bounded

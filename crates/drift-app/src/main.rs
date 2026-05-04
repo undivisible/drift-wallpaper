@@ -12,7 +12,7 @@ mod ui;
 mod menubar;
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use drift_core::{FluxRenderer, Settings};
@@ -108,6 +108,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         windows: Vec<DisplayWindow>,
         window_signature: Option<WindowSignature>,
         last_config_refresh: Instant,
+        last_config_modified: Option<SystemTime>,
         /// Last merged now-playing poll source — clears artwork when any display's mode changes it.
         wallpaper_profile_np_source_seen: Option<drift_core::NowPlayingSource>,
         now_playing_key: Option<String>,
@@ -376,10 +377,16 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
             // Refresh config from disk at most every 500 ms.
             if self.last_config_refresh.elapsed() >= Duration::from_millis(500) {
-                if let Ok(latest) = AppConfig::try_load() {
-                    if let Ok(mut current) = self.config.lock() {
-                        *current = latest;
+                let modified = std::fs::metadata(AppConfig::config_path())
+                    .and_then(|meta| meta.modified())
+                    .ok();
+                if modified != self.last_config_modified {
+                    if let Ok(latest) = AppConfig::try_load() {
+                        if let Ok(mut current) = self.config.lock() {
+                            *current = latest;
+                        }
                     }
+                    self.last_config_modified = modified;
                 }
                 self.last_config_refresh = Instant::now();
             }
@@ -484,6 +491,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         windows: Vec::new(),
         window_signature: None,
         last_config_refresh: Instant::now(),
+        last_config_modified: None,
         now_playing_key: None,
         wallpaper_profile_np_source_seen: None,
         now_playing_snapshot: None,
