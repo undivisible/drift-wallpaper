@@ -128,6 +128,7 @@ mod macos {
 pub use macos::open_accent_color_panel;
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 pub fn open_accent_color_panel(
     _: std::sync::Arc<std::sync::Mutex<crate::config::AppConfig>>,
     _: &str,

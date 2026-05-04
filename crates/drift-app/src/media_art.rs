@@ -52,6 +52,7 @@ pub fn resolve_now_playing_snapshot(
 /// widgets such as [Übersicht spotify-now-playing](https://gist.github.com/L-A/cb687690c9558faf427eba91edf9ca04),
 /// plus stable `id` like [spotify-notifier](https://github.com/ryanmohta/spotify-notifier)).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 struct SpotifyScriptLines<'a> {
     track_id: &'a str,
     title: &'a str,
@@ -60,6 +61,7 @@ struct SpotifyScriptLines<'a> {
     artwork_url: &'a str,
 }
 
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 fn parse_spotify_osascript_stdout(stdout: &str) -> Option<SpotifyScriptLines<'_>> {
     let mut lines = stdout.lines();
     let track_id = lines.next()?.trim();
