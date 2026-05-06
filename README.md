@@ -6,7 +6,7 @@ Fluid live wallpaper for macOS, Windows, and Linux, inspired by [sandydoo/flux](
 
 ## Quick start
 
-**Recommended:** use **[wax](https://github.com/semitechnological/wax)** — cross-platform, handles dependencies and updates:
+**Recommended:** use **[wax](https://github.com/semitechnological/wax)**:
 
 ```sh
 wax install undivisible/tap/drift-wallpaper
