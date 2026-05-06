@@ -134,12 +134,23 @@ install_from_release() {
 # ---- repo vs release -------------------------------------------------------
 
 _SRC="${BASH_SOURCE[0]:-}"
-if [[ -n "$_src" ]] && [[ "$(basename -- "$_src")" == "install.sh" ]] && [[ "${DRIFT_USE_RELEASE:-}" != "1" ]]; then
-  _root="$(cd "$(dirname -- "$_src")" && pwd)"
-  if [ -f "${_root}/Cargo.toml" ] && grep -q 'name = "drift-app"' "${_root}/Cargo.toml" 2>/dev/null; then
-    install_from_repo "$_root"
-    exit 0
-  fi
-fi
+if [[ -n "$_SRC" ]] && [[ "$(basename -- "$_SRC")" == "install.sh" ]] && [[ "${DRIFT_USE_RELEASE:-}" != "1" ]]; then
+  _start_dir="$(cd "$(dirname -- "$_SRC")" && pwd)"
+  _root="$_start_dir"
+   # Walk up to find the repo root (contains crates/drift-app or drift-app Cargo.toml)
+   while [[ "$_root" != "/" ]]; do
+     if [[ -d "${_root}/crates/drift-app" ]]; then
+       break
+     fi
+     if [[ -f "${_root}/Cargo.toml" ]] && grep -q 'name = "drift-app"' "${_root}/Cargo.toml" 2>/dev/null; then
+       break
+     fi
+     _root="$(dirname -- "$_root")"
+   done
+   if [[ -d "${_root}/crates/drift-app" ]] || { [[ -f "${_root}/Cargo.toml" ]] && grep -q 'name = "drift-app"' "${_root}/Cargo.toml" 2>/dev/null; }; then
+     install_from_repo "$_root"
+     exit 0
+   fi
+ fi
 
-install_from_release
+ install_from_release
