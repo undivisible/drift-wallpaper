@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, OnceLock, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -32,9 +32,6 @@ const IDLE_TICK: Duration = Duration::from_millis(250);
 const TRANSITION_TICK: Duration = Duration::from_millis(50);
 const TRANSITION_STEPS: u32 = 12;
 
-/// After a Spotify playback notification fires, poll every 500 ms for up to this long before
-/// falling back to the normal refresh interval. Spotify's internal state sometimes lags behind
-/// the notification by a few hundred milliseconds.
 const SPOTIFY_NOTIFICATION_RETRY_WINDOW: Duration = Duration::from_secs(5);
 const SPOTIFY_NOTIFICATION_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -54,7 +51,7 @@ impl NowPlayingController {
 }
 
 pub fn spawn_now_playing_worker(
-    config: Arc<Mutex<AppConfig>>,
+    config: Arc<RwLock<AppConfig>>,
 ) -> (NowPlayingController, mpsc::Receiver<NowPlayingUpdate>) {
     let (refresh_tx, refresh_rx) = mpsc::channel();
     let (update_tx, update_rx) = mpsc::channel();
@@ -125,13 +122,6 @@ impl TransitionState {
     }
 }
 
-/// Whether the worker should call AppleScript / snapshot resolution again this iteration.
-///
-/// While [`TransitionState`] is active, `settled_snapshot` still points at the *previous* track
-/// until the crossfade completes, but `resolve_now_playing` already returns the *new* track.
-/// That makes `changed` look true on every poll, so we'd restart the transition every
-/// [`TRANSITION_TICK`] and never reach `progress >= 1.0`—the wallpaper would appear stuck.
-/// We skip fetches during a transition unless the merged poll source changed (mode / monitor).
 #[inline]
 fn should_fetch_now_playing_snapshot(
     tick_due: bool,
@@ -142,7 +132,7 @@ fn should_fetch_now_playing_snapshot(
 }
 
 fn worker_loop(
-    config: Arc<Mutex<AppConfig>>,
+    config: Arc<RwLock<AppConfig>>,
     refresh_rx: mpsc::Receiver<()>,
     update_tx: mpsc::Sender<NowPlayingUpdate>,
 ) {
@@ -155,13 +145,10 @@ fn worker_loop(
     let mut transition: Option<TransitionState> = None;
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
     let mut pending_refresh = true;
-    // Track when we last received a Spotify playback notification so we can retry quickly
-    // if Spotify's state hasn't caught up to the notification yet.
     let mut last_notification_at: Option<Instant> = None;
 
     loop {
         let got_notification = refresh_rx.try_recv().is_ok();
-        // Drain any remaining signals.
         while refresh_rx.try_recv().is_ok() {}
         if got_notification {
             pending_refresh = true;
@@ -169,7 +156,7 @@ fn worker_loop(
         }
 
         let current_source = config
-            .lock()
+            .read()
             .ok()
             .and_then(|cfg| cfg.now_playing_poll_source());
 
@@ -177,8 +164,6 @@ fn worker_loop(
             pending_refresh = true;
         }
 
-        // If we recently received a Spotify notification and haven't detected a change yet,
-        // poll frequently to catch up with Spotify's lagging internal state.
         let in_spotify_retry_window =
             last_notification_at.is_some_and(|t| t.elapsed() < SPOTIFY_NOTIFICATION_RETRY_WINDOW);
 
@@ -188,8 +173,6 @@ fn worker_loop(
             SPOTIFY_NOTIFICATION_RETRY_INTERVAL
         } else {
             match current_source {
-                // Faster polling when a desktop player is selected — distributed
-                // notifications are best-effort; AppleScript rounds out track changes.
                 Some(NowPlayingSource::Spotify) => Duration::from_millis(500),
                 Some(NowPlayingSource::AppleMusic) => Duration::from_secs(3),
                 Some(NowPlayingSource::Automatic) => Duration::from_secs(6),
@@ -212,7 +195,6 @@ fn worker_loop(
                         .is_none_or(|current| current.key != snapshot.key);
 
                     if changed {
-                        // Clear the retry window once we've detected the new track.
                         last_notification_at = None;
                         if let Some(from) = displayed_snapshot.clone() {
                             transition = Some(TransitionState::new(from, snapshot, current_source));
@@ -325,7 +307,7 @@ fn worker_loop(
 }
 
 fn settle_snapshot(
-    config: &Arc<Mutex<AppConfig>>,
+    config: &Arc<RwLock<AppConfig>>,
     update_tx: &mpsc::Sender<NowPlayingUpdate>,
     last_source: &mut Option<NowPlayingSource>,
     settled_snapshot: &mut Option<NowPlayingSnapshot>,
@@ -343,7 +325,7 @@ fn settle_snapshot(
 }
 
 fn resolve_now_playing(
-    config: &Arc<Mutex<AppConfig>>,
+    config: &Arc<RwLock<AppConfig>>,
     current_source: Option<NowPlayingSource>,
     previous_snapshot: Option<&NowPlayingSnapshot>,
 ) -> anyhow::Result<Option<NowPlayingSnapshot>> {
@@ -360,13 +342,13 @@ fn resolve_now_playing(
 }
 
 fn apply_now_playing_ui_derivatives(
-    config: &Arc<Mutex<AppConfig>>,
+    config: &Arc<RwLock<AppConfig>>,
     snapshot: Option<&NowPlayingSnapshot>,
 ) {
     let accent = snapshot.map(|s| s.accent_hex.clone());
     let palette = snapshot.map(|s| s.palette);
     let mut to_save = None;
-    if let Ok(mut cfg) = config.lock() {
+    if let Ok(mut cfg) = config.write() {
         if cfg.now_playing_accent_hex != accent || cfg.now_playing_palette != palette {
             cfg.now_playing_accent_hex = accent;
             cfg.now_playing_palette = palette;
@@ -388,7 +370,7 @@ fn write_transition_snapshot(
     palette: [[f32; 3]; 3],
 ) -> anyhow::Result<NowPlayingSnapshot> {
     let path = transition_cache_path(&from.key, &to.key, step);
-    let image = render_palette_image(palette, 256, 128);
+    let image = render_palette_image(palette, 64, 32);
     image.save(&path)?;
 
     Ok(NowPlayingSnapshot {
@@ -412,34 +394,20 @@ fn transition_cache_path(from_key: &str, to_key: &str, step: u32) -> PathBuf {
 }
 
 fn render_palette_image(palette: [[f32; 3]; 3], width: u32, height: u32) -> image::RgbaImage {
-    let mut image = image::RgbaImage::new(width, height);
-    if width == 0 || height == 0 {
-        return image;
-    }
-
-    for y in 0..height {
-        let _ = y;
-        for x in 0..width {
-            let t = if width <= 1 {
-                0.0
-            } else {
-                x as f32 / (width - 1) as f32
-            };
-            let rgb = sample_three_stop_palette(palette, t);
-            image.put_pixel(
-                x,
-                y,
-                image::Rgba([
-                    (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-                    (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-                    (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-                    255,
-                ]),
-            );
-        }
-    }
-
-    image
+    image::ImageBuffer::from_fn(width, height, |x, _y| {
+        let t = if width <= 1 {
+            0.0
+        } else {
+            x as f32 / (width.saturating_sub(1)) as f32
+        };
+        let rgb = sample_three_stop_palette(palette, t);
+        image::Rgba([
+            (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+            (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+            255,
+        ])
+    })
 }
 
 fn sample_three_stop_palette(stops: [[f32; 3]; 3], t: f32) -> [f32; 3] {

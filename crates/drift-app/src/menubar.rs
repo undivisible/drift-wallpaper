@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 mod macos {
     use std::cell::RefCell;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, OnceLock, RwLock};
 
     use objc2::msg_send;
     use objc2::rc::Retained;
@@ -17,7 +17,7 @@ mod macos {
     use crate::config::{AppConfig, SUPPRESS_MENU_BAR_TRAY_ENV};
     use crate::launch_agent;
 
-    pub type SharedConfig = Arc<Mutex<AppConfig>>;
+    pub type SharedConfig = Arc<RwLock<AppConfig>>;
 
     static MENU_CONFIG: OnceLock<SharedConfig> = OnceLock::new();
 
@@ -48,7 +48,7 @@ mod macos {
                 let Some(cfg) = MENU_CONFIG.get() else {
                     return;
                 };
-                if let Ok(mut guard) = cfg.lock() {
+                if let Ok(mut guard) = cfg.write() {
                     guard.enabled = !guard.enabled;
                     let _ = guard.save();
                 }
@@ -59,7 +59,7 @@ mod macos {
                 let Some(cfg) = MENU_CONFIG.get() else {
                     return;
                 };
-                if let Ok(mut guard) = cfg.lock() {
+                if let Ok(mut guard) = cfg.write() {
                     let next = match guard.monitor_mode {
                         crate::config::MonitorMode::Linked => crate::config::MonitorMode::Independent,
                         crate::config::MonitorMode::Independent => crate::config::MonitorMode::Linked,
@@ -74,7 +74,7 @@ mod macos {
                 let Some(cfg) = MENU_CONFIG.get() else {
                     return;
                 };
-                if let Ok(mut guard) = cfg.lock() {
+                if let Ok(mut guard) = cfg.write() {
                     let next = !guard.launch_at_login;
                     guard.launch_at_login = next;
                     let result = if next {
@@ -144,7 +144,7 @@ mod macos {
         target_ptr: *mut DriftMenuTarget,
     ) -> Retained<NSMenu> {
         let menu = NSMenu::new(mtm);
-        let state = config.lock().map(|guard| guard.clone()).unwrap_or_default();
+        let state = config.read().map(|guard| guard.clone()).unwrap_or_default();
 
         let settings_item =
             make_action_item(mtm, "Open Settings…", sel!(driftOpenSettings:), target_ptr);

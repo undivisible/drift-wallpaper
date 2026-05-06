@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 mod macos {
     use std::cell::RefCell;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, OnceLock, RwLock};
 
     use objc2::msg_send;
     use objc2::rc::Retained;
@@ -13,7 +13,7 @@ mod macos {
 
     use crate::config::AppConfig;
 
-    type SharedConfig = Arc<Mutex<AppConfig>>;
+    type SharedConfig = Arc<RwLock<AppConfig>>;
 
     static COLOR_CONFIG: OnceLock<SharedConfig> = OnceLock::new();
 
@@ -41,7 +41,7 @@ mod macos {
                     return;
                 };
 
-                if let Ok(mut guard) = config.lock() {
+                if let Ok(mut guard) = config.write() {
                     guard.ui_accent_override = Some(hex);
                     if let Err(error) = guard.save() {
                         log::warn!("save accent override: {error}");
@@ -130,7 +130,7 @@ pub use macos::open_accent_color_panel;
 #[cfg(not(target_os = "macos"))]
 #[allow(dead_code)]
 pub fn open_accent_color_panel(
-    _: std::sync::Arc<std::sync::Mutex<crate::config::AppConfig>>,
+    _: std::sync::Arc<std::sync::RwLock<crate::config::AppConfig>>,
     _: &str,
 ) {
 }

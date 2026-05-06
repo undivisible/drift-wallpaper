@@ -12,7 +12,7 @@ mod ui;
 #[cfg(target_os = "macos")]
 mod menubar;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
@@ -54,8 +54,8 @@ fn main() -> Result<()> {
         cli::StartupAction::Exit => Ok(()),
         cli::StartupAction::Run { mode } => match mode {
             cli::RunMode::Ui => ui::run_ui(config),
-            cli::RunMode::Background => run_app(Arc::new(Mutex::new(config)), true),
-            cli::RunMode::Preview => run_app(Arc::new(Mutex::new(config)), false),
+            cli::RunMode::Background => run_app(Arc::new(RwLock::new(config)), true),
+            cli::RunMode::Preview => run_app(Arc::new(RwLock::new(config)), false),
         },
     }
 }
@@ -76,11 +76,11 @@ fn main() -> Result<()> {
                 let mtm = unsafe { MainThreadMarker::new_unchecked() };
                 let app = NSApplication::sharedApplication(mtm);
                 app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-                let shared = Arc::new(Mutex::new(config));
+                let shared = Arc::new(RwLock::new(config));
                 let _status_item = menubar::create_status_item(mtm, Arc::clone(&shared));
                 run_app(shared, true)
             }
-            cli::RunMode::Preview => run_app(Arc::new(Mutex::new(config)), false),
+            cli::RunMode::Preview => run_app(Arc::new(RwLock::new(config)), false),
         },
     }
 }
@@ -91,8 +91,6 @@ struct DisplayWindow {
     monitor_id: String,
     renderer: FluxRenderer,
     applied_settings: Settings,
-    /// When artwork is driven by now playing, re-apply renderer settings even if `Settings`
-    /// compares equal (e.g. cache path hash collision or overwritten file at same path).
     applied_now_playing_key: Option<String>,
 }
 
@@ -105,25 +103,68 @@ enum WindowSignature {
     },
 }
 
-fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
+fn run_app(config: Arc<RwLock<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
     let event_loop = EventLoop::new()?;
-    // Start in Wait mode; about_to_wait switches to WaitUntil once windows exist.
-    // This prevents the busy-poll that was consuming a full CPU core even at idle.
     event_loop.set_control_flow(ControlFlow::Wait);
 
+    struct SharedGpu {
+        _instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+    }
+
+    let gpu = {
+        let instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..instance_descriptor
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        }))
+        .context("Failed to find a compatible wgpu adapter")?;
+
+        let limits = wgpu::Limits::default().using_resolution(adapter.limits());
+        let features = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            | wgpu::Features::FLOAT32_FILTERABLE;
+
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("drift-core-device"),
+                required_features: features,
+                required_limits: limits,
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            }))
+            .context("Failed to create wgpu device")?;
+
+        SharedGpu {
+            _instance: instance,
+            adapter,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+        }
+    };
+    let gpu = Arc::new(gpu);
+
     struct App {
-        config: Arc<Mutex<AppConfig>>,
+        config: Arc<RwLock<AppConfig>>,
         wallpaper_mode: bool,
         windows: Vec<DisplayWindow>,
         window_signature: Option<WindowSignature>,
         last_config_refresh: Instant,
         last_config_modified: Option<SystemTime>,
-        /// Last merged now-playing poll source — clears artwork when any display's mode changes it.
         wallpaper_profile_np_source_seen: Option<drift_core::NowPlayingSource>,
         now_playing_key: Option<String>,
         now_playing_snapshot: Option<media_art::NowPlayingSnapshot>,
         now_playing_controller: Option<now_playing::NowPlayingController>,
         now_playing_updates_rx: std::sync::mpsc::Receiver<now_playing::NowPlayingUpdate>,
+        gpu: Arc<SharedGpu>,
     }
 
     fn sync_windows(app: &mut App, event_loop: &ActiveEventLoop) {
@@ -158,13 +199,15 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
             monitors.sort_by_key(|m| (m.position().x, m.position().y));
             let monitor_handles: Vec<MonitorHandle> = monitors.clone();
 
-            log::debug!(
-                "Wallpaper: {} display(s) from winit (sorted left-to-right, top-to-bottom by position).",
-                monitor_handles.len()
-            );
+            if cfg!(debug_assertions) {
+                log::debug!(
+                    "Wallpaper: {} display(s) from winit (sorted left-to-right, top-to-bottom by position).",
+                    monitor_handles.len()
+                );
+            }
 
             let discovered: Vec<_> = monitors.iter().map(discover_monitor).collect();
-            if let Ok(mut cfg) = app.config.lock() {
+            if let Ok(mut cfg) = app.config.write() {
                 if cfg.ensure_monitors(&discovered) {
                     let _ = cfg.save();
                 }
@@ -172,7 +215,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
 
             let wallpaper_layout = app
                 .config
-                .lock()
+                .read()
                 .map(|cfg| cfg.wallpaper_layout)
                 .unwrap_or(WallpaperLayout::PerMonitor);
 
@@ -255,7 +298,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
     ) {
         let wallpaper_layout = app
             .config
-            .lock()
+            .read()
             .map(|cfg| cfg.wallpaper_layout)
             .unwrap_or(WallpaperLayout::PerMonitor);
 
@@ -305,7 +348,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             }
 
-            let (settings, battery_saver) = match app.config.lock() {
+            let (settings, battery_saver) = match app.config.read() {
                 Ok(cfg) => {
                     let settings = if app.wallpaper_mode
                         && cfg.wallpaper_layout == WallpaperLayout::SpanDisplays
@@ -326,7 +369,13 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 battery_saver,
             );
 
-            match create_renderer(Arc::clone(&window), settings.clone()) {
+            match create_renderer(
+                &app.gpu.adapter,
+                Arc::clone(&app.gpu.device),
+                Arc::clone(&app.gpu.queue),
+                Arc::clone(&window),
+                settings.clone(),
+            ) {
                 Ok(mut renderer) => {
                     if app.wallpaper_mode
                         && wallpaper_layout == WallpaperLayout::SpanDisplays
@@ -382,7 +431,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                     }
                 }
                 WindowEvent::RedrawRequested => {
-                    let enabled = self.config.lock().map(|cfg| cfg.enabled).unwrap_or(true);
+                    let enabled = self.config.read().map(|cfg| cfg.enabled).unwrap_or(true);
                     if !enabled {
                         return;
                     }
@@ -406,14 +455,15 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         }
 
         fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-            // Refresh config from disk at most every 500 ms.
-            if self.last_config_refresh.elapsed() >= Duration::from_millis(500) {
+            // Refresh config from disk at most every 2 s (was 500 ms — the wallpaper
+            // process does not need sub-second config responsiveness).
+            if self.last_config_refresh.elapsed() >= Duration::from_secs(2) {
                 let modified = std::fs::metadata(AppConfig::config_path())
                     .and_then(|meta| meta.modified())
                     .ok();
                 if modified != self.last_config_modified {
                     if let Ok(latest) = AppConfig::try_load() {
-                        if let Ok(mut current) = self.config.lock() {
+                        if let Ok(mut current) = self.config.write() {
                             *current = latest;
                         }
                     }
@@ -422,8 +472,7 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 self.last_config_refresh = Instant::now();
             }
 
-            // Single config snapshot for the entire frame — avoids repeated mutex churn.
-            let cfg = match self.config.lock() {
+            let cfg = match self.config.read() {
                 Ok(g) => g.clone(),
                 Err(_) => return,
             };
@@ -443,11 +492,6 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             }
 
-            // Only reset in-memory artwork when the *merged* poll source actually changes after we
-            // already had one (e.g. Spotify → Apple Music, or now playing → off). On a cold start
-            // `wallpaper_profile_np_source_seen` is `None` while `current_np_source` is
-            // `Some(...)` — clearing here ran *after* draining the worker channel and discarded
-            // every freshly received snapshot, so the wallpaper never picked up new tracks.
             if self.wallpaper_profile_np_source_seen != current_np_source {
                 if self.wallpaper_profile_np_source_seen.is_some() {
                     self.now_playing_key = None;
@@ -461,7 +505,6 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
 
             sync_windows(self, event_loop);
 
-            // Push updated settings to each renderer.
             for display in &mut self.windows {
                 let mut settings = if self.wallpaper_mode
                     && cfg.wallpaper_layout == WallpaperLayout::SpanDisplays
@@ -496,9 +539,6 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                 }
             }
 
-            // Schedule next frame via WaitUntil instead of busy-polling.
-            // This allows the OS to sleep the process between frames, dropping
-            // CPU usage from ~100% (Poll) to < 2% during normal animation.
             if cfg.enabled {
                 for display in &self.windows {
                     display.window.request_redraw();
@@ -508,7 +548,6 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
                     Instant::now() + Duration::from_secs_f32(1.0 / fps),
                 ));
             } else {
-                // Wallpaper paused — sleep until re-enabled (no redraws needed).
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
         }
@@ -528,40 +567,43 @@ fn run_app(config: Arc<Mutex<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         now_playing_snapshot: None,
         now_playing_controller: Some(now_playing_controller),
         now_playing_updates_rx,
+        gpu,
     };
     event_loop.run_app(&mut app)?;
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn sync_flux_renderer_to_wallpaper_window(window: &Window, renderer: &mut FluxRenderer) {
+fn create_renderer(
+    adapter: &wgpu::Adapter,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    window: Arc<Window>,
+    settings: Settings,
+) -> Result<FluxRenderer> {
     let physical = window.inner_size();
     let logical = physical.to_logical::<u32>(window.scale_factor());
-    renderer.resize(
-        logical.width,
-        logical.height,
-        physical.width,
-        physical.height,
-    );
-}
-
-fn create_renderer(window: Arc<Window>, settings: Settings) -> Result<FluxRenderer> {
-    let physical = window.inner_size();
-    let logical = physical.to_logical::<u32>(window.scale_factor());
-    let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-    instance_descriptor.backends = wgpu::Backends::all();
-    let instance = wgpu::Instance::new(instance_descriptor);
 
     let surface = unsafe {
-        instance.create_surface_unsafe(
-            wgpu::SurfaceTargetUnsafe::from_display_and_window(window.as_ref(), window.as_ref())
+        let instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..instance_descriptor
+        });
+        instance
+            .create_surface_unsafe(
+                wgpu::SurfaceTargetUnsafe::from_display_and_window(
+                    window.as_ref(),
+                    window.as_ref(),
+                )
                 .context("create surface target from window")?,
-        )
-    }
-    .context("create wgpu surface")?;
+            )
+            .context("create wgpu surface")?
+    };
 
     FluxRenderer::new(
-        instance,
+        adapter,
+        device,
+        queue,
         surface,
         logical.width,
         logical.height,
@@ -625,7 +667,6 @@ fn combined_monitor_bounds(
     combined_bounds_from_rects(&rects)
 }
 
-/// Union of monitor rectangles in physical coordinates (top-left x/y, width, height).
 fn combined_bounds_from_rects(
     rects: &[(i32, i32, u32, u32)],
 ) -> Option<(
@@ -651,8 +692,6 @@ fn combined_bounds_from_rects(
     ))
 }
 
-/// Mirrors which `Settings` clone is used for a wallpaper/preview window so we know whether
-/// now-playing artwork drives its colors.
 fn display_uses_now_playing_colors(
     cfg: &AppConfig,
     monitor_id: &str,
@@ -697,7 +736,6 @@ fn materialize_runtime_settings(
     settings
 }
 
-/// Present rate for the wallpaper loop (matches effective settings passed to the renderer).
 fn effective_wallpaper_fps(cfg: &AppConfig) -> f32 {
     let base = cfg.wallpaper_profile().fluid_frame_rate.clamp(1.0, 240.0);
     if cfg.battery_saver {
@@ -705,6 +743,18 @@ fn effective_wallpaper_fps(cfg: &AppConfig) -> f32 {
     } else {
         base
     }
+}
+
+#[cfg(target_os = "macos")]
+fn sync_flux_renderer_to_wallpaper_window(window: &Window, renderer: &mut FluxRenderer) {
+    let physical = window.inner_size();
+    let logical = physical.to_logical::<u32>(window.scale_factor());
+    renderer.resize(
+        logical.width,
+        logical.height,
+        physical.width,
+        physical.height,
+    );
 }
 
 #[cfg(target_os = "macos")]

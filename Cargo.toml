@@ -12,6 +12,12 @@ authors = ["Max Carter <undivisible@vk.com>"]
 license = "MPL-2.0"
 repository = "https://github.com/undivisible/drift-wallpaper"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+
 [workspace.dependencies]
 log = "0.4"
 env_logger = "0.11"

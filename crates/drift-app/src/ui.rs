@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
@@ -29,7 +29,7 @@ use crate::config::SUPPRESS_MENU_BAR_TRAY_ENV;
 actions!(drift_app_actions, [Quit]);
 
 pub fn run_ui(initial_config: AppConfig) -> Result<()> {
-    let shared = Arc::new(Mutex::new(initial_config));
+    let shared = Arc::new(RwLock::new(initial_config));
     let shared_window = Arc::clone(&shared);
     #[cfg(target_os = "macos")]
     let show_menu_bar_tray = std::env::var_os(SUPPRESS_MENU_BAR_TRAY_ENV).is_none();
@@ -77,56 +77,30 @@ pub fn run_ui(initial_config: AppConfig) -> Result<()> {
 }
 
 struct DriftUi {
-    config: Arc<Mutex<AppConfig>>,
+    config: Arc<RwLock<AppConfig>>,
     config_refresh_started: bool,
     advanced_settings_expanded: bool,
-    settings_template_cache: Option<SettingsTemplateCache>,
-}
-
-struct SettingsTemplateCache {
-    modified: Option<SystemTime>,
-    component_file: ComponentFile,
+    settings_component_file: ComponentFile,
 }
 
 impl DriftUi {
-    fn new(config: Arc<Mutex<AppConfig>>, _cx: &mut Context<Self>) -> Self {
+    fn new(config: Arc<RwLock<AppConfig>>, _cx: &mut Context<Self>) -> Self {
+        let template_path = settings_template_path();
+        let source = std::fs::read_to_string(&template_path)
+            .unwrap_or_else(|e| panic!("Failed to read settings template {template_path:?}: {e}"));
+        let component_file = parse_component_file(&source)
+            .unwrap_or_else(|e| panic!("Failed to parse settings template: {e}"));
+
         Self {
             config,
             config_refresh_started: false,
             advanced_settings_expanded: false,
-            settings_template_cache: None,
+            settings_component_file: component_file,
         }
     }
 
     fn read_config(&self) -> AppConfig {
-        self.config.lock().map(|g| g.clone()).unwrap_or_default()
-    }
-
-    fn settings_component_file(&mut self) -> Result<&ComponentFile, String> {
-        let template_path = settings_template_path();
-        let modified = std::fs::metadata(&template_path)
-            .and_then(|meta| meta.modified())
-            .ok();
-
-        let stale = self
-            .settings_template_cache
-            .as_ref()
-            .is_none_or(|cache| cache.modified != modified);
-
-        if stale {
-            let source = std::fs::read_to_string(&template_path)
-                .map_err(|error| format!("Failed to read {template_path:?}: {error}"))?;
-            let component_file = parse_component_file(&source)?;
-            self.settings_template_cache = Some(SettingsTemplateCache {
-                modified,
-                component_file,
-            });
-        }
-
-        self.settings_template_cache
-            .as_ref()
-            .map(|cache| &cache.component_file)
-            .ok_or_else(|| "Settings template cache is empty".to_string())
+        self.config.read().map(|g| g.clone()).unwrap_or_default()
     }
 
     fn save_config(&self, cfg: &AppConfig) -> Result<()> {
@@ -134,8 +108,8 @@ impl DriftUi {
         normalized.sync_linked_monitors();
         let mut guard = self
             .config
-            .lock()
-            .map_err(|_| anyhow::anyhow!("config mutex poisoned"))?;
+            .write()
+            .map_err(|_| anyhow::anyhow!("config rwlock poisoned"))?;
         *guard = normalized.clone();
         guard.save()
     }
@@ -570,7 +544,7 @@ impl DriftUi {
 
     fn start_config_refresh_loop(
         weak_ui: WeakEntity<DriftUi>,
-        config: Arc<Mutex<AppConfig>>,
+        config: Arc<RwLock<AppConfig>>,
         window: &mut Window,
         cx: &mut Context<DriftUi>,
     ) {
@@ -594,7 +568,7 @@ impl DriftUi {
                 last_modified = modified;
 
                 if let Ok(latest) = AppConfig::try_load() {
-                    if let Ok(mut current) = config.lock() {
+                    if let Ok(mut current) = config.write() {
                         *current = latest;
                     }
                     let _ = weak_ui.update_in(async_cx, |_ui, window, cx| {
@@ -630,20 +604,8 @@ impl Render for DriftUi {
 
         let cfg = self.read_config();
         let advanced_settings_expanded = self.advanced_settings_expanded;
-        let component_file = match self.settings_component_file() {
-            Ok(file) => file,
-            Err(error) => {
-                return div()
-                    .w_full()
-                    .h_full()
-                    .p(px(16.))
-                    .text_color(rgb(0xf87171))
-                    .child(format!("Settings template error:\n{error}"))
-                    .into_any_element();
-            }
-        };
 
-        let Some(root) = component_file.components.get("SettingsRoot") else {
+        let Some(root) = self.settings_component_file.components.get("SettingsRoot") else {
             return div()
                 .w_full()
                 .h_full()
@@ -656,8 +618,6 @@ impl Render for DriftUi {
         let tctx = build_settings_context(&cfg, advanced_settings_expanded);
         let body = render_nodes_interactive(&root.nodes, &tctx, cx);
         let viewport_h = window.bounds().size.height;
-        // Flex + overflow boundary so the inner `overflow-y-scroll` region gets a bounded
-        // height (otherwise a single flex child grows with content and never scrolls).
         div()
             .w_full()
             .h(viewport_h)
@@ -692,9 +652,9 @@ fn build_settings_context(cfg: &AppConfig, advanced_settings_expanded: bool) -> 
     tctx.set(
         "advanced_settings_chevron",
         if advanced_settings_expanded {
-            "▾"
+            "\u{25be}"
         } else {
-            "▸"
+            "\u{25b8}"
         },
     );
 

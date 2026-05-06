@@ -1,6 +1,6 @@
 //! macOS color picker via NSColorPanel.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::config::AppConfig;
 use crate::platform::NativeColorPicker;
@@ -12,7 +12,7 @@ impl NativeColorPicker for MacosColorPicker {
         let hex = initial.map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"));
         let hex = hex.as_deref().unwrap_or("#000000");
         crate::color_picker::open_accent_color_panel(
-            Arc::new(Mutex::new(AppConfig::default())),
+            Arc::new(RwLock::new(AppConfig::default())),
             hex,
         );
         Ok(None)

@@ -8,9 +8,8 @@ use crate::render;
 use crate::{ColorMode, Flux, Settings};
 
 pub struct FluxRenderer {
-    _instance: wgpu::Instance,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     flux: Flux,
@@ -20,8 +19,11 @@ pub struct FluxRenderer {
 }
 
 impl FluxRenderer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        instance: wgpu::Instance,
+        adapter: &wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
         surface: wgpu::Surface<'static>,
         logical_width: u32,
         logical_height: u32,
@@ -29,28 +31,7 @@ impl FluxRenderer {
         physical_height: u32,
         settings: Settings,
     ) -> Result<Self> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        }))
-        .context("Failed to find a compatible wgpu adapter")?;
-
-        let limits = wgpu::Limits::default().using_resolution(adapter.limits());
-        let features = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-            | wgpu::Features::FLOAT32_FILTERABLE;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("drift-core-device"),
-            required_features: features,
-            required_limits: limits,
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
-            trace: wgpu::Trace::Off,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .context("Failed to create wgpu device")?;
-
-        let capabilities = surface.get_capabilities(&adapter);
+        let capabilities = surface.get_capabilities(adapter);
         let surface_format = preferred_surface_format(&capabilities);
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -79,7 +60,6 @@ impl FluxRenderer {
         let loaded_image_path = apply_color_mode(&mut flux, &device, &queue, &settings)?;
 
         Ok(Self {
-            _instance: instance,
             device,
             queue,
             surface,

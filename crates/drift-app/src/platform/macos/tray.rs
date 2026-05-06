@@ -1,7 +1,7 @@
 //! macOS system tray implementation via NSStatusBar.
 
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use objc2::msg_send;
 use objc2::rc::Retained;
@@ -22,7 +22,7 @@ pub type TrayHandle = Retained<NSStatusItem>;
 
 pub struct MacosSystemTray;
 
-static MENU_CONFIG: OnceLock<Arc<Mutex<AppConfig>>> = OnceLock::new();
+static MENU_CONFIG: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
 
 thread_local! {
     static MENU_TARGET: RefCell<Option<Retained<DriftMenuTarget>>> = const { RefCell::new(None) };
@@ -51,7 +51,7 @@ define_class!(
             let Some(cfg) = MENU_CONFIG.get() else {
                 return;
             };
-            if let Ok(mut guard) = cfg.lock() {
+            if let Ok(mut guard) = cfg.write() {
                 guard.enabled = !guard.enabled;
                 let _ = guard.save();
             }
@@ -62,7 +62,7 @@ define_class!(
             let Some(cfg) = MENU_CONFIG.get() else {
                 return;
             };
-            if let Ok(mut guard) = cfg.lock() {
+            if let Ok(mut guard) = cfg.write() {
                 let next = match guard.monitor_mode {
                     crate::config::MonitorMode::Linked => crate::config::MonitorMode::Independent,
                     crate::config::MonitorMode::Independent => crate::config::MonitorMode::Linked,
@@ -77,7 +77,7 @@ define_class!(
             let Some(cfg) = MENU_CONFIG.get() else {
                 return;
             };
-            if let Ok(mut guard) = cfg.lock() {
+            if let Ok(mut guard) = cfg.write() {
                 let next = !guard.launch_at_login;
                 guard.launch_at_login = next;
                 let result = if next {
@@ -124,7 +124,7 @@ fn menu_target_ptr(mtm: MainThreadMarker) -> *mut DriftMenuTarget {
 
 pub fn create_status_item(
     mtm: MainThreadMarker,
-    config: Arc<Mutex<AppConfig>>,
+    config: Arc<RwLock<AppConfig>>,
 ) -> Retained<NSStatusItem> {
     let _ = MENU_CONFIG.set(Arc::clone(&config));
     let target_ptr = menu_target_ptr(mtm);
@@ -143,14 +143,14 @@ pub fn create_status_item(
 
 fn build_menu(
     mtm: MainThreadMarker,
-    config: &Arc<Mutex<AppConfig>>,
+    config: &Arc<RwLock<AppConfig>>,
     target_ptr: *mut DriftMenuTarget,
 ) -> Retained<NSMenu> {
     let menu = NSMenu::new(mtm);
-    let state = config.lock().map(|guard| guard.clone()).unwrap_or_default();
+    let state = config.read().map(|guard| guard.clone()).unwrap_or_default();
 
     let settings_item =
-        make_action_item(mtm, "Open Settings…", sel!(driftOpenSettings:), target_ptr);
+        make_action_item(mtm, "Open Settings\u{2026}", sel!(driftOpenSettings:), target_ptr);
     menu.addItem(&settings_item);
 
     let enabled_item =
@@ -209,7 +209,7 @@ fn make_action_item(
 impl SystemTray for MacosSystemTray {
     type TrayHandle = Retained<NSStatusItem>;
 
-    fn create_tray(config: Arc<Mutex<AppConfig>>) -> anyhow::Result<Self::TrayHandle> {
+    fn create_tray(config: Arc<RwLock<AppConfig>>) -> anyhow::Result<Self::TrayHandle> {
         let mtm = unsafe { MainThreadMarker::new_unchecked() };
         Ok(create_status_item(mtm, config))
     }

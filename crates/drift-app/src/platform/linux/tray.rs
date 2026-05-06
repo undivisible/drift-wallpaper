@@ -3,7 +3,7 @@
 //! Uses libappindicator (AyatanaAppIndicator) for system tray integration
 //! on Linux desktops.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::config::AppConfig;
 use crate::platform::SystemTray;
@@ -17,8 +17,10 @@ pub struct LinuxSystemTray {
 }
 
 impl LinuxSystemTray {
-    pub fn create_tray(config: Arc<Mutex<AppConfig>>) -> anyhow::Result<Box<dyn SystemTrayHandle>> {
+    pub fn create_tray(config: Arc<RwLock<AppConfig>>) -> anyhow::Result<Box<dyn SystemTrayHandle>> {
         let connection = dbus::Connection::new_session().ok();
+
+        let _ = config;
 
         Ok(Box::new(LinuxSystemTray {
             _connection: connection,
@@ -33,7 +35,7 @@ impl SystemTrayHandle for LinuxSystemTray {
 impl SystemTray for LinuxSystemTray {
     type TrayHandle = Box<dyn SystemTrayHandle>;
 
-    fn create_tray(config: Arc<Mutex<AppConfig>>) -> anyhow::Result<Self::TrayHandle> {
+    fn create_tray(config: Arc<RwLock<AppConfig>>) -> anyhow::Result<Self::TrayHandle> {
         Self::create_tray(config)
     }
 }

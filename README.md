@@ -9,7 +9,8 @@ Fluid live wallpaper for macOS, Windows, and Linux, inspired by [sandydoo/flux](
 Install the latest development build from the Homebrew tap:
 
 ```sh
-brew install --HEAD undivisible/tap/drift-wallpaper
+wax tap undivisible/tap
+wax install --head drift-wallpaper
 ```
 
 Or run the installer directly:

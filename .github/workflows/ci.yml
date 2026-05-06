@@ -80,7 +80,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, macos-15, windows-latest]
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform_name: macos-aarch64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform_name: macos-aarch64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            platform_name: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform_name: windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -97,34 +109,49 @@ jobs:
             libwayland-dev \
             libx11-dev \
             libxrandr-dev \
-            libxi-dev
+            libxi-dev \
+            musl-tools
 
-      - name: Build release binary
-        run: cargo build --locked --release -p drift-app
+      - name: Install musl target (Linux)
+        if: runner.os == 'Linux'
+        run: rustup target add x86_64-unknown-linux-musl
 
-      - name: Set artifact name
-        id: artifact
+      - name: Build release binary (static)
+        run: |
+          cargo build --locked --release -p drift-app --target ${{ matrix.target }}
+
+      - name: Package artifact
         shell: bash
         run: |
-          OS="${{ runner.os }}"
-          MATRIX_OS="${{ matrix.os }}"
-          case "$OS" in
-            "macOS") ARTIFACT_NAME="drift-wallpaper-${MATRIX_OS}" ;;
-            "Linux") ARTIFACT_NAME="drift-wallpaper-linux" ;;
-            "Windows") ARTIFACT_NAME="drift-wallpaper-windows.exe" ;;
-          esac
-          echo "NAME=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
-          if [ "$OS" = "Windows" ]; then
-            echo "EXT=.exe" >> $GITHUB_OUTPUT
+          # Determine the built binary path
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            BIN="target/x86_64-pc-windows-msvc/release/drift-wallpaper.exe"
+            OUT_NAME="drift-wallpaper.exe"
           else
-            echo "EXT=" >> $GITHUB_OUTPUT
+            BIN="target/${{ matrix.target }}/release/drift-wallpaper"
+            OUT_NAME="drift-wallpaper"
           fi
+
+          # Copy to output name
+          cp "$BIN" "$OUT_NAME"
+
+          # Create archive
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            zip -j "${OUT_NAME}.zip" "$OUT_NAME"
+            ASSET_PATH="${OUT_NAME}.zip"
+          else
+            tar -czf "${OUT_NAME}.tar.gz" "$OUT_NAME"
+            ASSET_PATH="${OUT_NAME}.tar.gz"
+          fi
+
+          echo "ASSET_PATH=$ASSET_PATH" >> $GITHUB_OUTPUT
+          echo "ASSET_NAME=$(basename $ASSET_PATH)" >> $GITHUB_OUTPUT
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.artifact.outputs.NAME }}
-          path: target/release/drift-wallpaper${{ steps.artifact.outputs.EXT }}
+          name: drift-wallpaper-${{ matrix.platform_name }}
+          path: ${{ steps.package.outputs.ASSET_PATH }}
 
   create-release:
     name: Create Release
@@ -141,34 +168,26 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create checksum file
+      - name: Prepare release assets
         run: |
-          cd artifacts
-          for dir in */; do
-            platform="${dir%/}"
-            cd "$platform"
-            if [ -f drift-wallpaper.exe ]; then
-              sha256sum drift-wallpaper.exe > drift-wallpaper.exe.sha256
-            else
-              sha256sum drift-wallpaper* | grep -v '.sha256' > drift-wallpaper.sha256
+          mkdir -p release-assets
+          for dir in artifacts/*/; do
+            platform="$(basename "$dir")"
+            file="$(ls "$dir" | head -1)"
+            cp "$dir/$file" "release-assets/${platform}-$file"
+            # Also copy the checksum
+            (cd "$dir" && if [ -f "$file.sha256" ]; then
+              cp "$file.sha256" "../../release-assets/${platform}-$file.sha256"
             fi
-            cd ..
-          done
-          ls -la
+            done
+          ls -la release-assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          draft: true
+          draft: false
           generate_release_notes: true
           files: |
-            artifacts/drift-wallpaper-macos-14/drift-wallpaper
-            artifacts/drift-wallpaper-macos-14/drift-wallpaper.sha256
-            artifacts/drift-wallpaper-macos-15/drift-wallpaper
-            artifacts/drift-wallpaper-macos-15/drift-wallpaper.sha256
-            artifacts/drift-wallpaper-linux/drift-wallpaper
-            artifacts/drift-wallpaper-linux/drift-wallpaper.sha256
-            artifacts/drift-wallpaper-windows.exe/drift-wallpaper.exe
-            artifacts/drift-wallpaper-windows.exe/drift-wallpaper.exe.sha256
+            release-assets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

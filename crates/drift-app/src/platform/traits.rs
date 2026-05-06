@@ -3,7 +3,7 @@
 //! These traits define the interface for platform-specific functionality.
 //! Each platform implementation must provide implementations for all traits.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use winit::monitor::MonitorHandle;
 use winit::window::Window;
@@ -44,7 +44,7 @@ pub trait SystemTray: Send + Sync {
     type TrayHandle;
 
     /// Create a system tray icon with the given menu.
-    fn create_tray(config: Arc<Mutex<AppConfig>>) -> anyhow::Result<Self::TrayHandle>
+    fn create_tray(config: Arc<RwLock<AppConfig>>) -> anyhow::Result<Self::TrayHandle>
     where
         Self: Sized;
 }

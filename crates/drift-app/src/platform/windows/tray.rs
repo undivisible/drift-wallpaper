@@ -2,7 +2,7 @@
 //!
 //! Uses the Windows Shell_NotifyIcon API for system tray integration.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::config::AppConfig;
 use crate::platform::SystemTray;
@@ -16,7 +16,7 @@ pub struct WindowsSystemTray {
 }
 
 impl WindowsSystemTray {
-    pub fn create_tray(config: Arc<Mutex<AppConfig>>) -> anyhow::Result<Box<dyn SystemTrayHandle>> {
+    pub fn create_tray(config: Arc<RwLock<AppConfig>>) -> anyhow::Result<Box<dyn SystemTrayHandle>> {
         use windows::Win32::Foundation::*;
         use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -36,6 +36,8 @@ impl WindowsSystemTray {
                 None,
             )?;
 
+            let _ = config;
+
             Ok(Box::new(WindowsSystemTray {
                 _hwnd: hwnd.0 as isize,
             }))
@@ -50,7 +52,7 @@ impl SystemTrayHandle for WindowsSystemTray {
 impl SystemTray for WindowsSystemTray {
     type TrayHandle = Box<dyn SystemTrayHandle>;
 
-    fn create_tray(config: Arc<Mutex<AppConfig>>) -> anyhow::Result<Self::TrayHandle> {
+    fn create_tray(config: Arc<RwLock<AppConfig>>) -> anyhow::Result<Self::TrayHandle> {
         Self::create_tray(config)
     }
 }
