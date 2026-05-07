@@ -83,10 +83,10 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
-            platform_name: macos-aarch64
+            platform_name: macos-14-aarch64
           - os: macos-15
             target: aarch64-apple-darwin
-            platform_name: macos-aarch64
+            platform_name: macos-15-aarch64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             platform_name: linux-x86_64
@@ -121,15 +121,16 @@ jobs:
           cargo build --locked --release -p drift-app --target ${{ matrix.target }}
 
       - name: Package artifact
+        id: package
         shell: bash
         run: |
           # Determine the built binary path
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             BIN="target/x86_64-pc-windows-msvc/release/drift-wallpaper.exe"
-            OUT_NAME="drift-wallpaper.exe"
+            OUT_NAME="drift-wallpaper-${{ matrix.platform_name }}.exe"
           else
             BIN="target/${{ matrix.target }}/release/drift-wallpaper"
-            OUT_NAME="drift-wallpaper"
+            OUT_NAME="drift-wallpaper-${{ matrix.platform_name }}"
           fi
 
           # Copy to output name
@@ -168,19 +169,18 @@ jobs:
         with:
           path: artifacts
 
-      - name: Prepare release assets
+      - name: Prepare release assets and checksums
         run: |
           mkdir -p release-assets
           for dir in artifacts/*/; do
-            platform="$(basename "$dir")"
-            file="$(ls "$dir" | head -1)"
-            cp "$dir/$file" "release-assets/${platform}-$file"
+            [ -d "$dir" ] || continue
+            filename="$(ls -1 "$dir" | head -1)"
+            cp "$dir/$filename" "release-assets/${filename}"
             # Also copy the checksum
-            (cd "$dir" && if [ -f "$file.sha256" ]; then
-              cp "$file.sha256" "../../release-assets/${platform}-$file.sha256"
-            fi
-            done
-          ls -la release-assets/
+            (cd "release-assets" && sha256sum "${filename}" > "${filename}.sha256")
+          done
+          echo "Prepared assets:"
+          ls -l release-assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -188,6 +188,6 @@ jobs:
           draft: false
           generate_release_notes: true
           files: |
-            release-assets/**/*
+            release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

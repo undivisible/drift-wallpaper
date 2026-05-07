@@ -132,16 +132,15 @@ fn run_app(config: Arc<RwLock<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         let features = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
             | wgpu::Features::FLOAT32_FILTERABLE;
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                label: Some("drift-core-device"),
-                required_features: features,
-                required_limits: limits,
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            }))
-            .context("Failed to create wgpu device")?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("drift-core-device"),
+            required_features: features,
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        }))
+        .context("Failed to create wgpu device")?;
 
         SharedGpu {
             _instance: instance,
