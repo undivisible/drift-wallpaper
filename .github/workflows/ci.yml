@@ -83,10 +83,7 @@ jobs:
         include:
           - os: macos-14
             target: aarch64-apple-darwin
-            platform_name: macos-14-aarch64
-          - os: macos-15
-            target: aarch64-apple-darwin
-            platform_name: macos-15-aarch64
+            platform_name: macos-aarch64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform_name: linux-x86_64
