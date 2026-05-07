@@ -88,7 +88,7 @@ jobs:
             target: aarch64-apple-darwin
             platform_name: macos-15-aarch64
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             platform_name: linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -109,14 +109,13 @@ jobs:
             libwayland-dev \
             libx11-dev \
             libxrandr-dev \
-            libxi-dev \
-            musl-tools
+            libxi-dev
 
       - name: Install musl target (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: rustup target add x86_64-unknown-linux-musl
 
-      - name: Build release binary (static)
+      - name: Build release binary
         run: |
           cargo build --locked --release -p drift-app --target ${{ matrix.target }}
 
