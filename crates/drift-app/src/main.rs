@@ -108,7 +108,7 @@ fn run_app(config: Arc<RwLock<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
     event_loop.set_control_flow(ControlFlow::Wait);
 
     struct SharedGpu {
-        _instance: wgpu::Instance,
+        instance: wgpu::Instance,
         adapter: wgpu::Adapter,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
@@ -143,7 +143,7 @@ fn run_app(config: Arc<RwLock<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
         .context("Failed to create wgpu device")?;
 
         SharedGpu {
-            _instance: instance,
+            instance,
             adapter,
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -369,6 +369,7 @@ fn run_app(config: Arc<RwLock<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
             );
 
             match create_renderer(
+                &app.gpu.instance,
                 &app.gpu.adapter,
                 Arc::clone(&app.gpu.device),
                 Arc::clone(&app.gpu.queue),
@@ -573,6 +574,7 @@ fn run_app(config: Arc<RwLock<AppConfig>>, wallpaper_mode: bool) -> Result<()> {
 }
 
 fn create_renderer(
+    instance: &wgpu::Instance,
     adapter: &wgpu::Adapter,
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -583,11 +585,6 @@ fn create_renderer(
     let logical = physical.to_logical::<u32>(window.scale_factor());
 
     let surface = unsafe {
-        let instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..instance_descriptor
-        });
         instance
             .create_surface_unsafe(
                 wgpu::SurfaceTargetUnsafe::from_display_and_window(

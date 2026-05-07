@@ -6,7 +6,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.41"
 edition = "2021"
 authors = ["Max Carter <undivisible@vk.com>"]
 license = "MPL-2.0"
@@ -43,4 +43,3 @@ thiserror = "2"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
-

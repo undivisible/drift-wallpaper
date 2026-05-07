@@ -1386,7 +1386,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "drift-app"
-version = "0.1.0"
+version = "0.1.41"
 dependencies = [
  "anyhow",
  "crepuscularity-runtime",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "drift-core"
-version = "0.1.0"
+version = "0.1.41"
 dependencies = [
  "anyhow",
  "approx",
