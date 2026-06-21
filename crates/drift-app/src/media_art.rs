@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use drift_core::{ColorPalette, NowPlayingSource};
+use drift_core::NowPlayingSource;
 
 #[cfg(target_os = "macos")]
 use std::path::Path;
@@ -10,6 +10,8 @@ use std::process::Command;
 
 #[cfg(target_os = "macos")]
 use anyhow::Context;
+#[cfg(target_os = "macos")]
+use drift_core::ColorPalette;
 
 #[derive(Debug, Clone)]
 pub struct NowPlayingSnapshot {
