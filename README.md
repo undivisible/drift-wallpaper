@@ -1,6 +1,6 @@
 # drift-wallpaper
 
-Fluid live wallpaper for macOS, Windows, and Linux, inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
+Fluid live wallpaper for macOS, inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
 
 ![CI](https://github.com/undivisible/drift-wallpaper/actions/workflows/ci.yml/badge.svg)
 
@@ -12,35 +12,20 @@ Fluid live wallpaper for macOS, Windows, and Linux, inspired by [sandydoo/flux](
 wax install undivisible/tap/drift-wallpaper
 ```
 
-**Or with Homebrew** (macOS / Linux):
-
-```sh
-brew install undivisible/tap/drift-wallpaper
-```
-
----
-
 **Manual install**
 
-If you don't use wax or Homebrew, download and run the installer directly:
+If you don't use wax, download and run the installer directly:
 
-**macOS / Linux**
+**macOS**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/undivisible/drift-wallpaper/m/scripts/install.sh | bash
 ```
 
-**Windows (PowerShell)**
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/undivisible/drift-wallpaper/m/scripts/install.ps1 | iex"
-```
-
 From a local checkout (builds from source):
 
 ```sh
-./scripts/install.sh          # macOS / Linux
-.\scripts\install.ps1         # Windows
+./scripts/install.sh
 ```
 
 ---
@@ -50,15 +35,11 @@ From a local checkout (builds from source):
 For the latest unreleased changes, use `--head` or the `--version` flag:
 
 ```sh
-brew install --head drift-wallpaper
+wax install undivisible/tap/drift-wallpaper --head
 ```
 
 ```sh
 DRIFT_USE_RELEASE=1 ./scripts/install.sh --version latest
-```
-
-```powershell
-.\scripts\install.ps1 -UseRelease -Version latest
 ```
 
 Build from source manually:
