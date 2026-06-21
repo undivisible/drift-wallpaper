@@ -2,6 +2,8 @@
 
 Fluid live wallpaper for macOS, inspired by [sandydoo/flux](https://github.com/sandydoo/flux).
 
+Cross-platform porting work currently lives on the `cross-platform-port` branch and is not part of the tested `m` branch release surface.
+
 ![CI](https://github.com/undivisible/drift-wallpaper/actions/workflows/ci.yml/badge.svg)
 
 ## Quick start
