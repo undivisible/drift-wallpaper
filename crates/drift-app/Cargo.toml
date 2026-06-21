@@ -22,7 +22,6 @@ wgpu.workspace = true
 pollster.workspace = true
 image.workspace = true
 gpui.workspace = true
-unicode-segmentation.workspace = true
 crepuscularity-runtime.workspace = true
 
 # macOS-only dependencies: Objective-C runtime + AppKit
@@ -63,17 +62,11 @@ objc2-app-kit = { version = "0.3", features = [
     "NSColorSpace",
 ] }
 
-# Linux-only dependencies: MPRIS D-Bus for media player querying
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = { version = "4", features = ["async-fs"] }
 x11 = { version = "2", features = ["xlib", "xrandr"] }
 
-# Windows-only dependencies: Media Session API for now playing
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
-    "Media_Control",
-    "Win32",
     "Win32_Foundation",
-    "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
 ] }

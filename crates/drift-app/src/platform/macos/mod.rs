@@ -1,10 +1,8 @@
 //! macOS platform implementation.
 
-pub mod wallpaper;
-
-pub use wallpaper::MacosWallpaperManager;
-
 use crate::platform::{WallpaperManager, WallpaperManagerSync};
+
+pub struct MacosWallpaperManager;
 
 impl WallpaperManagerSync for MacosWallpaperManager {
     const REQUIRES_SYNC: bool = true;

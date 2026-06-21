@@ -6,7 +6,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.42"
 edition = "2021"
 authors = ["Max Carter <undivisible@vk.com>"]
 license = "MPL-2.0"
@@ -26,7 +26,6 @@ winit = { version = "0.30", features = ["rwh_06"] }
 pollster = "0.4"
 gpui = { version = "0.2.2", default-features = false, features = ["font-kit"] }
 crepuscularity-runtime = "0.3.0"
-unicode-segmentation = "1"
 approx = "0.5.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 rand = { version = "0.10", features = ["thread_rng"] }
@@ -34,7 +33,3 @@ rand_pcg = "0.10"
 rand_seeder = "0.5"
 rustc-hash = "2.1"
 thiserror = "2"
-proc-macro2 = "1"
-quote = "1"
-syn = { version = "2", features = ["full", "extra-traits"] }
-
