@@ -17,7 +17,8 @@ impl LinuxWallpaperManager {
             HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
         };
 
-        if let (Ok(display_handle), Ok(window_handle)) = (window.display_handle(), window.window_handle())
+        if let (Ok(display_handle), Ok(window_handle)) =
+            (window.display_handle(), window.window_handle())
         {
             if let (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) =
                 (display_handle.as_raw(), window_handle.as_raw())
@@ -65,7 +66,8 @@ impl LinuxWallpaperManager {
         let position = monitor.position();
         let size = monitor.size();
 
-        if let (Ok(display_handle), Ok(window_handle)) = (window.display_handle(), window.window_handle())
+        if let (Ok(display_handle), Ok(window_handle)) =
+            (window.display_handle(), window.window_handle())
         {
             if let (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) =
                 (display_handle.as_raw(), window_handle.as_raw())
@@ -100,7 +102,8 @@ impl LinuxWallpaperManager {
             HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
         };
 
-        if let (Ok(display_handle), Ok(window_handle)) = (window.display_handle(), window.window_handle())
+        if let (Ok(display_handle), Ok(window_handle)) =
+            (window.display_handle(), window.window_handle())
         {
             if let (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) =
                 (display_handle.as_raw(), window_handle.as_raw())
