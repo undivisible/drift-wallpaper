@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: ["*"]
   pull_request:
-    branches: ["**"]
+    branches: ["*"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,7 +22,6 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # wgpu on Linux needs system-level Vulkan / GL headers for linking.
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -71,19 +70,113 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release -p drift-app
 
-      - name: Verify cargo install
-        run: cargo install --path crates/drift-app --locked --force
+  build-release:
+    name: Build Release (${{ matrix.os }})
+    needs: [lint, test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform_name: macos-aarch64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform_name: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform_name: windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev
+
+      - name: Build release binary
+        run: |
+          cargo build --locked --release -p drift-app --target ${{ matrix.target }}
+
+      - name: Package artifact
+        id: package
+        shell: bash
+        run: |
+          # Determine the built binary path
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            BIN="target/x86_64-pc-windows-msvc/release/drift-wallpaper.exe"
+            OUT_NAME="drift-wallpaper-${{ matrix.platform_name }}.exe"
+          else
+            BIN="target/${{ matrix.target }}/release/drift-wallpaper"
+            OUT_NAME="drift-wallpaper-${{ matrix.platform_name }}"
+          fi
+
+          # Copy to output name
+          cp "$BIN" "$OUT_NAME"
+
+          # Create archive
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            powershell -NoProfile -Command "Compress-Archive -LiteralPath '${OUT_NAME}' -DestinationPath '${OUT_NAME}.zip' -Force"
+            ASSET_PATH="${OUT_NAME}.zip"
+          else
+            tar -czf "${OUT_NAME}.tar.gz" "$OUT_NAME"
+            ASSET_PATH="${OUT_NAME}.tar.gz"
+          fi
+
+          echo "ASSET_PATH=$ASSET_PATH" >> $GITHUB_OUTPUT
+          echo "ASSET_NAME=$(basename $ASSET_PATH)" >> $GITHUB_OUTPUT
 
       - name: Upload binary artifact
-        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: drift-wallpaper-${{ runner.os }}
-          path: target/release/drift-wallpaper
+          name: drift-wallpaper-${{ matrix.platform_name }}
+          path: ${{ steps.package.outputs.ASSET_PATH }}
 
-      - name: Upload binary artifact (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+  create-release:
+    name: Create Release
+    needs: [build-release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: drift-wallpaper-Windows
-          path: target/release/drift-wallpaper.exe
+          path: artifacts
+
+      - name: Prepare release assets and checksums
+        run: |
+          mkdir -p release-assets
+          for dir in artifacts/*/; do
+            [ -d "$dir" ] || continue
+            filename="$(ls -1 "$dir" | head -1)"
+            cp "$dir/$filename" "release-assets/${filename}"
+            # Also copy the checksum
+            (cd "release-assets" && sha256sum "${filename}" > "${filename}.sha256")
+          done
+          echo "Prepared assets:"
+          ls -l release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
