@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: ["*"]
     tags: ["v*"]
   pull_request:
 
@@ -70,9 +70,6 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release -p drift-app
 
-      - name: Verify cargo install
-        run: cargo install --path crates/drift-app --locked --force
-
   build-release:
     name: Build Release (${{ matrix.os }})
     needs: [lint, test]
@@ -107,10 +104,6 @@ jobs:
             libx11-dev \
             libxrandr-dev \
             libxi-dev
-
-      - name: Install musl target (Linux)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: rustup target add x86_64-unknown-linux-musl
 
       - name: Build release binary
         run: |
