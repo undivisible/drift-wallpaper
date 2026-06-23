@@ -4,6 +4,7 @@ mod config;
 mod crepus_interactive;
 mod crepus_settings_render;
 mod launch_agent;
+mod settings_crepus;
 mod media_art;
 mod now_playing;
 mod platform;

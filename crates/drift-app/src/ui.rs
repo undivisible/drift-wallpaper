@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -7,6 +6,7 @@ use crepuscularity_runtime::{parse_component_file, ComponentFile, TemplateContex
 
 use crate::crepus_interactive::CrepusMouseDispatch;
 use crate::crepus_settings_render::render_nodes_interactive;
+use crate::settings_crepus::{settings_ui_virtual_files, SETTINGS_UI_CREPUS};
 use drift_core::settings::{COLOR_SCHEME_PLASMA, COLOR_SCHEME_POOLSIDE};
 use drift_core::{ColorMode, ColorPreset, Mode, NowPlayingSource, PressureMode, Settings};
 use gpui::{
@@ -85,10 +85,7 @@ struct DriftUi {
 
 impl DriftUi {
     fn new(config: Arc<RwLock<AppConfig>>, _cx: &mut Context<Self>) -> Self {
-        let template_path = settings_template_path();
-        let source = std::fs::read_to_string(&template_path)
-            .unwrap_or_else(|e| panic!("Failed to read settings template {template_path:?}: {e}"));
-        let component_file = parse_component_file(&source)
+        let component_file = parse_component_file(SETTINGS_UI_CREPUS)
             .unwrap_or_else(|e| panic!("Failed to parse settings template: {e}"));
 
         Self {
@@ -637,16 +634,10 @@ impl Render for DriftUi {
     }
 }
 
-fn settings_template_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("views")
-        .join("settings_ui.crepus")
-}
-
 fn build_settings_context(cfg: &AppConfig, advanced_settings_expanded: bool) -> TemplateContext {
     let settings = cfg.active_profile();
     let mut tctx = TemplateContext::new();
-    tctx.base_dir = settings_template_path().parent().map(|p| p.to_path_buf());
+    tctx.virtual_files = settings_ui_virtual_files();
 
     tctx.set("advanced_settings_expanded", advanced_settings_expanded);
     tctx.set(
@@ -1037,8 +1028,7 @@ mod tests {
 
     #[test]
     fn settings_template_parses() {
-        let source = std::fs::read_to_string(settings_template_path()).unwrap();
-        let component_file = parse_component_file(&source).unwrap();
+        let component_file = parse_component_file(SETTINGS_UI_CREPUS).unwrap();
         assert!(component_file.components.contains_key("SettingsRoot"));
     }
 }
