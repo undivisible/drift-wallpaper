@@ -2,6 +2,8 @@
 //!
 //! Uses X11 to create borderless override-redirect windows at the desktop level.
 
+use std::ffi::c_uint;
+
 use winit::monitor::MonitorHandle;
 use winit::window::Window;
 
@@ -11,7 +13,6 @@ pub struct LinuxWallpaperManager;
 
 impl LinuxWallpaperManager {
     pub fn set_desktop_level(window: &Window) -> anyhow::Result<()> {
-        use std::ffi::c_uint;
         use winit::raw_window_handle::{
             HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
         };
@@ -97,7 +98,6 @@ impl LinuxWallpaperManager {
     }
 
     pub fn snap_to_all_monitors(window: &Window) -> anyhow::Result<()> {
-        use std::ffi::c_uint;
         use winit::raw_window_handle::{
             HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
         };
