@@ -43,7 +43,12 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 45
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
