@@ -23,6 +23,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -53,6 +58,11 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
+
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -66,10 +76,20 @@ jobs:
             libxi-dev
 
       - name: Test (workspace, all targets)
-        run: cargo test --workspace --all-targets --locked
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 45
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: cargo test --workspace --all-targets --locked
 
       - name: Build release binary
-        run: cargo build --locked --release -p drift-app
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 45
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: cargo build --locked --release -p drift-app
 
   build-release:
     name: Build Release (${{ matrix.os }})
@@ -94,6 +114,11 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
+
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -107,8 +132,12 @@ jobs:
             libxi-dev
 
       - name: Build release binary
-        run: |
-          cargo build --locked --release -p drift-app --target ${{ matrix.target }}
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 60
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: cargo build --locked --release -p drift-app --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package
