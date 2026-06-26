@@ -1,17 +1,20 @@
 [package]
-name = "drift-app"
+name = "drift-wallpaper"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "macOS live-wallpaper app powered by the Drift fluid simulation"
+repository.workspace = true
+homepage.workspace = true
+description = "Live wallpaper app powered by the Drift fluid simulation"
+include = ["src/**/*", "assets/**/*", "views/**/*", "Cargo.toml"]
 
 [[bin]]
 name = "drift-wallpaper"
 path = "src/main.rs"
 
 [dependencies]
-drift-core = { path = "../drift-core" }
+drift-wallpaper-core = { version = "0.1.43", path = "../drift-core" }
 log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true

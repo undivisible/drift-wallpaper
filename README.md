@@ -6,6 +6,12 @@ Fluid live wallpaper inspired by [sandydoo/flux](https://github.com/sandydoo/flu
 
 ## Quick start
 
+**From crates.io** (Rust toolchain required):
+
+```sh
+cargo install drift-wallpaper --locked
+```
+
 **Recommended (macOS):** use **[wax](https://github.com/semitechnological/wax)**:
 
 ```sh
@@ -63,7 +69,7 @@ DRIFT_USE_RELEASE=1 ./scripts/install.sh --version latest
 Build from source manually:
 
 ```sh
-cargo build --release -p drift-app
+cargo build --release -p drift-wallpaper
 
 # Control panel (GPUI)
 ./target/release/drift-wallpaper --settings
@@ -99,7 +105,7 @@ Each archive has a matching `.sha256` checksum on the release page.
 | Crate | Role |
 |-------|------|
 | `drift-core` | `wgpu` fluid simulation, WGSL shaders, color / presets |
-| `drift-app` | `winit` wallpaper windows, GPUI settings UI, platform desktop integration |
+| `drift-wallpaper` (crate in `crates/drift-app`) | `winit` wallpaper windows, GPUI settings UI, platform desktop integration |
 
 ## Tests & CI
 

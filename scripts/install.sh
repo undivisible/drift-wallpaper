@@ -57,7 +57,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." 2>/dev/null && pwd || tru
 
 if [[ -n "$repo_root" && -f "$repo_root/crates/drift-app/Cargo.toml" ]]; then
   cd "$repo_root"
-  cargo build --release -p drift-app --locked
+  cargo build --release -p drift-wallpaper --locked
   mkdir -p "$install_dir"
   install -m 0755 target/release/drift-wallpaper "$install_dir/drift-wallpaper"
 
@@ -65,4 +65,4 @@ if [[ -n "$repo_root" && -f "$repo_root/crates/drift-app/Cargo.toml" ]]; then
   exit 0
 fi
 
-cargo install --git "$repo_url" --branch "$branch" drift-app --locked --force
+cargo install --git "$repo_url" --branch "$branch" drift-wallpaper --locked --force

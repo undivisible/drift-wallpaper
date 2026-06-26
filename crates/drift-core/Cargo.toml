@@ -1,10 +1,15 @@
 [package]
-name = "drift-core"
+name = "drift-wallpaper-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Core fluid-simulation renderer for drift-wallpaper-macos"
+repository.workspace = true
+homepage.workspace = true
+description = "Core fluid-simulation renderer for drift-wallpaper"
+
+[lib]
+name = "drift_core"
 
 [dependencies]
 log.workspace = true

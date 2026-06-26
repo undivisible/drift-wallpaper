@@ -17,4 +17,4 @@ COPY . .
 RUN cargo fmt --all --check \
     && cargo clippy --workspace --all-targets --locked -- -D warnings \
     && cargo test --workspace --all-targets --locked \
-    && cargo build --locked --release -p drift-app
+    && cargo build --locked --release -p drift-wallpaper

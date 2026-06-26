@@ -13,7 +13,7 @@ pub const LAUNCH_AGENT_LABEL: &str = "com.drift-wallpaper.macos";
 
 /// Plist content template – the `{BIN}` placeholder is replaced at runtime
 /// with the absolute path to the current executable.
-const PLIST_TEMPLATE: &str = include_str!("../../../launch-agents/com.drift-wallpaper.macos.plist");
+const PLIST_TEMPLATE: &str = include_str!("../assets/com.drift-wallpaper.macos.plist");
 
 /// Install the Launch Agent plist for the current user.
 pub fn install() -> Result<()> {

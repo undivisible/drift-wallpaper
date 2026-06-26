@@ -85,7 +85,7 @@ function Install-FromRepo($root) {
     Info "Building drift-wallpaper from local checkout ($root)…"
     Push-Location $root
     try {
-        cargo build --release -p drift-app --locked
+        cargo build --release -p drift-wallpaper --locked
     }
     finally {
         Pop-Location

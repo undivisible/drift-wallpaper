@@ -45,7 +45,7 @@ install_from_repo() {
     die "cargo not in PATH — install Rust from https://rustup.rs/ or set DRIFT_USE_RELEASE=1 to download a binary."
   fi
   info "Building drift-wallpaper from local checkout (${root})…"
-  ( cd "$root" && cargo build --release -p drift-app --locked )
+  ( cd "$root" && cargo build --release -p drift-wallpaper --locked )
   mkdir -p "$INSTALL_DIR"
   cp "${root}/target/release/drift-wallpaper" "${INSTALL_DIR}/drift-wallpaper"
   chmod +x "${INSTALL_DIR}/drift-wallpaper"
@@ -142,12 +142,12 @@ if [[ -n "$_SRC" ]] && [[ "$(basename -- "$_SRC")" == "install.sh" ]] && [[ "${D
      if [[ -d "${_root}/crates/drift-app" ]]; then
        break
      fi
-     if [[ -f "${_root}/Cargo.toml" ]] && grep -q 'name = "drift-app"' "${_root}/Cargo.toml" 2>/dev/null; then
+     if [[ -f "${_root}/crates/drift-app/Cargo.toml" ]] && grep -q 'name = "drift-wallpaper"' "${_root}/crates/drift-app/Cargo.toml" 2>/dev/null; then
        break
      fi
      _root="$(dirname -- "$_root")"
    done
-   if [[ -d "${_root}/crates/drift-app" ]] || { [[ -f "${_root}/Cargo.toml" ]] && grep -q 'name = "drift-app"' "${_root}/Cargo.toml" 2>/dev/null; }; then
+   if [[ -d "${_root}/crates/drift-app" ]]; then
      install_from_repo "$_root"
      exit 0
    fi

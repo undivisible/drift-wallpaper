@@ -94,7 +94,7 @@ jobs:
           timeout_minutes: 45
           max_attempts: 3
           retry_wait_seconds: 15
-          command: cargo build --locked --release -p drift-app
+          command: cargo build --locked --release -p drift-wallpaper
 
   build-release:
     name: Build Release (${{ matrix.os }})
@@ -142,7 +142,7 @@ jobs:
           timeout_minutes: 60
           max_attempts: 3
           retry_wait_seconds: 15
-          command: cargo build --locked --release -p drift-app --target ${{ matrix.target }}
+          command: cargo build --locked --release -p drift-wallpaper --target ${{ matrix.target }}
 
       - name: Package artifact
         id: package
