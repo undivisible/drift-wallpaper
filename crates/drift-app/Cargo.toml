@@ -14,7 +14,7 @@ name = "drift-wallpaper"
 path = "src/main.rs"
 
 [dependencies]
-drift-wallpaper-core = { version = "0.1.43", path = "../drift-core" }
+drift-wallpaper-core = { version = "0.1.44", path = "../drift-core" }
 log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
