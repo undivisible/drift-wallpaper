@@ -17,3 +17,6 @@
 *.ico binary
 *.icns binary
 *.pdf binary
+
+# Exclude Shell from GitHub language statistics.
+*.sh linguist-detectable=false
